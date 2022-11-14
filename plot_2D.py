@@ -84,6 +84,18 @@ def plot_trajectory(proj_file, dir_file, show=False):
     assert exists(proj_file), 'Projection file does not exist.'
     f = h5py.File(proj_file, 'r')
     fig = plt.figure()
+    print(f['proj_xcoord'], f['proj_ycoord'])
+    lx = []
+    ly = []
+    # for i in f['proj_xcoord']:
+    #     print(i)
+    #     lx.append(i)
+    # for i in f['proj_ycoord']:
+    #     print(i)
+    #     ly.append(i)
+
+    print(f"proj_file={proj_file}, dir_file={dir_file}")
+
     plt.plot(f['proj_xcoord'], f['proj_ycoord'], marker='.')
     plt.tick_params('y', labelsize='x-large')
     plt.tick_params('x', labelsize='x-large')

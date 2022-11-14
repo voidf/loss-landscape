@@ -13,8 +13,8 @@ import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
 import torch.nn.parallel
 
-import model_loader
-import dataloader
+from cifar10 import model_loader
+from cifar10 import dataloader
 
 def init_params(net):
     for m in net.modules():
@@ -191,16 +191,16 @@ if __name__ == '__main__':
         os.mkdir(args.save)
 
     save_folder = name_save_folder(args)
-    if not os.path.exists('trained_nets/' + save_folder):
-        os.makedirs('trained_nets/' + save_folder)
+    if not os.path.exists(f'{args.save}/' + save_folder):
+        os.makedirs(f'{args.save}/' + save_folder)
 
-    f = open('trained_nets/' + save_folder + '/log.out', 'a')
+    f = open(f'{args.save}/' + save_folder + '/log.out', 'a')
 
     trainloader, testloader = dataloader.get_data_loaders(args)
 
     if args.label_corrupt_prob and not args.resume_model:
-        torch.save(trainloader, 'trained_nets/' + save_folder + '/trainloader.dat')
-        torch.save(testloader, 'trained_nets/' + save_folder + '/testloader.dat')
+        torch.save(trainloader, f'{args.save}/' + save_folder + '/trainloader.dat')
+        torch.save(testloader, f'{args.save}/' + save_folder + '/testloader.dat')
 
     # Model
     if args.resume_model:
@@ -252,8 +252,8 @@ if __name__ == '__main__':
         opt_state = {
             'optimizer': optimizer.state_dict()
         }
-        torch.save(state, 'trained_nets/' + save_folder + '/model_0.t7')
-        torch.save(opt_state, 'trained_nets/' + save_folder + '/opt_state_0.t7')
+        torch.save(state, f'{args.save}/' + save_folder + '/model_0.t7')
+        torch.save(opt_state, f'{args.save}/' + save_folder + '/opt_state_0.t7')
 
     for epoch in range(start_epoch, args.epochs + 1):
         loss, train_err = train(trainloader, net, criterion, optimizer, use_cuda)
@@ -274,8 +274,8 @@ if __name__ == '__main__':
             opt_state = {
                 'optimizer': optimizer.state_dict()
             }
-            torch.save(state, 'trained_nets/' + save_folder + '/model_' + str(epoch) + '.t7')
-            torch.save(opt_state, 'trained_nets/' + save_folder + '/opt_state_' + str(epoch) + '.t7')
+            torch.save(state, f'{args.save}/' + save_folder + '/model_' + str(epoch) + '.t7')
+            torch.save(opt_state, f'{args.save}/' + save_folder + '/opt_state_' + str(epoch) + '.t7')
 
         if int(epoch) == 150 or int(epoch) == 225 or int(epoch) == 275:
             lr *= args.lr_decay

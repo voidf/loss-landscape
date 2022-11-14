@@ -1,0 +1,26 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: vgg9",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": ["--model_folder=trained_nets/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1", "--model=vgg9"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}

@@ -190,7 +190,7 @@ def setup_PCA_directions(args, model_files, w, s):
     if args.ignore:
         folder_name += '_ignore=' + args.ignore
     folder_name += '_save_epoch=' + str(args.save_epoch)
-    os.system('mkdir ' + folder_name)
+    os.mkdir(folder_name)
     dir_name = folder_name + '/directions.h5'
 
     # skip if the direction file exists
@@ -212,7 +212,7 @@ def setup_PCA_directions(args, model_files, w, s):
             s2 = net2.state_dict()
             d = net_plotter.get_diff_states(s, s2)
         if args.ignore == 'biasbn':
-        	net_plotter.ignore_biasbn(d)
+            net_plotter.ignore_biasbn(d)
         d = tensorlist_to_tensor(d)
         matrix.append(d.numpy())
 

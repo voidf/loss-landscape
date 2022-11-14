@@ -70,7 +70,7 @@ def load_dataset(dataset='cifar10', datapath='cifar10/data', batch_size=128, \
                                                        sampler=train_sampler,
                                                        shuffle=False, num_workers=threads)
         else:
-            kwargs = {'num_workers': 2, 'pin_memory': True}
+            kwargs = {'num_workers': threads, 'pin_memory': True}
             train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
                                                       shuffle=False, **kwargs)
         testset = torchvision.datasets.CIFAR10(root=data_folder, train=False,

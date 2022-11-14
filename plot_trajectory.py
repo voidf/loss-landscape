@@ -32,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--dir_file', default='', help='load the direction file for projection')
 
     args = parser.parse_args()
+    print(args)
 
     #--------------------------------------------------------------------------
     # load the final model

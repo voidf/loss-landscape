@@ -23,6 +23,9 @@ import plot_1D
 import model_loader
 import scheduler
 import mpi4pytorch as mpi
+from mpi4py import MPI
+
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 def name_surface_file(args, dir_file):
     # skip if surf_file is specified in args
@@ -59,11 +62,13 @@ def setup_surface_file(args, surf_file, dir_file):
     f['dir_file'] = dir_file
 
     # Create the coordinates(resolutions) at which the function is evaluated
-    xcoordinates = np.linspace(args.xmin, args.xmax, num=args.xnum)
+    print(type(args.xmin), type(args.xmax), type(args.xnum))
+    print(args.xmin, args.xmax, args.xnum)
+    xcoordinates = np.linspace(args.xmin, args.xmax, num=int(args.xnum))
     f['xcoordinates'] = xcoordinates
 
     if args.y:
-        ycoordinates = np.linspace(args.ymin, args.ymax, num=args.ynum)
+        ycoordinates = np.linspace(args.ymin, args.ymax, num=int(args.ynum))
         f['ycoordinates'] = ycoordinates
     f.close()
 
@@ -75,7 +80,7 @@ def crunch(surf_file, net, w, s, d, dataloader, loss_key, acc_key, comm, rank, a
         Calculate the loss values and accuracies of modified models in parallel
         using MPI reduce.
     """
-
+    print(surf_file)
     f = h5py.File(surf_file, 'r+' if rank == 0 else 'r')
     losses, accuracies = [], []
     xcoordinates = f['xcoordinates'][:]
