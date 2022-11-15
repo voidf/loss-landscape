@@ -13,3 +13,6 @@ R56*
 res1*
 D121*
 data/
+*.pkl
+*.json
+*.png
