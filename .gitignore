@@ -16,3 +16,5 @@ data/
 *.pkl
 *.json
 *.png
+*.acc
+logs.txt

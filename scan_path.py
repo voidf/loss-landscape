@@ -4,10 +4,10 @@ import torch
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import pickle
+from loguru import logger
 
 from cifar10.model_loader import *
 from wrappers import *
-
 
 
 def plot_curve(points, acc, savePath=''):
@@ -61,58 +61,63 @@ if __name__ == '__main__':
     net = load('vgg9')
 
     wra = construct_wrapper(net)
+    wra.to('cuda') # 关键
+
+    # ms = torch.load(cat('paths08_07_k=0A', 'neb_path3.pkl'))
+    # for mi in ms:
+    #     eval_coord(wra, mi)
+
     coords = []
     acc = []
 
-    flg = 0
-    def scandir():
-        import os
-        global flg
-        for i in os.listdir('.'):
-            if i.startswith('tn'):
-                for j in os.listdir(i):
-                    for k in os.listdir(cat(i,j)):
-                        if k.startswith('model_'):
-                            if k == 'model_300.t7':
-                                finalidx = len(coords)
-                            print(k)
-                            try:
-                                m = torch.load(cat(i, j, k))
-                                net.load_state_dict(m['state_dict'])
-                                coords.append(wra.get_coords().numpy())
-                                acc.append(m['acc'])
-                            except:
-                                traceback.print_exc()
-                    if flg < 4:
-                        flg += 1
-                    else:
-                        return finalidx
+    scandir = 'paths08_07_k=0A'
 
-            print(i)
-    fin = scandir()
-    coords = np.array(coords)
+    fi = open('logs.txt', mode='a')
+    def pin(x: str):
+        logger.info(x)
+        fi.write(x + '\n')
+        fi.flush()
+
+    import os
+    for k in os.listdir(scandir):
+        if k.endswith('.pkl'):
+            print(cat(scandir, k))
+            try:
+                m = torch.load(cat(scandir, k))
+                li = []
+                for mi in m:
+                    # wra.set_coords_no_grad(mi)
+                # net.load_state_dict(m['state_dict'])
+                    li.append(list(eval_coord(wra, mi)))
+                    coords.append(mi.cpu().numpy())
+                with open(cat(scandir, k + '.acc'), 'wb') as f:
+                    pickle.dump(li, f)
+                acc.extend(li)
+                pin(f"{cat(scandir, k)}: {li}")
+
+            except:
+                traceback.print_exc()
+    # coords = np.array(coords)
     # with open('vgg9_33G.pkl', 'wb') as f:
     #     pickle.dump((coords, acc), f)
     # print('loading...')
     # with open('vgg9_33G.pkl', 'rb') as f:
     #     coords, acc = pickle.load(f)
     # print('loaded')
-    import copy
-    # dvd = copy.deepcopy(coords[fin])
-    dvd = coords.mean(0)
+
     for i in coords:
-        i[:] -= dvd
+        i[:] -= coords[-1]
     print('PCA...')
 
     pca = PCA(n_components=3)
-    # pca.fit(coords[1:] - coords[:-1])
     pca.fit(coords)
     ax = pca.components_[:3]
-    print(pca.explained_variance_)
     pos = []
 
-    for i in coords:
-        pos.append([i.dot(x) for x in ax])
+    acc = [x[3] for x in acc]
+
+    # for i in coords:
+    #     pos.append([i.dot(x) for x in ax])
     # with open('direct3.pkl', 'wb') as f:
     #     pickle.dump(ax, f)
     # with open('projected.pkl', 'wb') as f:

@@ -12,6 +12,7 @@ from functools import reduce
 from torch import Tensor
 from torch.nn import Module
 from torch.utils.data import DataLoader, Dataset
+from torch import linspace
 from typing import Union, Dict
 import operator
 
@@ -166,6 +167,21 @@ class DataModel(Module):  # 用来喂数据的包装Model的类
         device = list(self.model.parameters())[0].device
         return [item.to(device) for item in batch]
 
+    def analyse(self):
+        # Go through all data points and accumulate stats
+        analysis = {}
+        for ds_name, dataset in self.datasets.items():
+            ds_length = len(dataset)
+            for batch in ensure_data_loader(dataset, batch_size=self.batch_size):
+                batch = self.batch_to_device(batch)
+                result = self.model.analyse(*batch)
+                for key, value in result.items():
+                    ds_key = f"{ds_name}_{key}"
+                    if ds_key not in analysis:
+                        analysis[ds_key] = 0
+                    analysis[ds_key] += value * batch[0].shape[0] / ds_length
+        return analysis
+
 
 class ModelWrapper():
     """
@@ -247,6 +263,7 @@ class ModelWrapper():
 
             # Size consistency check
             final = final + size
+        # print('updated coords cache')
         assert final == self.coords.shape[0]
 
     def _grad_to_cache(self):
@@ -337,9 +354,18 @@ class ModelWrapper():
         with torch.set_grad_enabled(False):
             return self.model.analyse()
 
+def init_res_dict(start: Tensor, end: Tensor):
+    nt = start.new(2, *start.shape)
+    nt[0][:] = start
+    nt[1][:] = end
+    return {
+        'path_coords': nt,
+        'target_distances': torch.ones(1)
+    }
+
 
 class NEB():
-    def __init__(self, model: ModelWrapper, start: Tensor, end, equal_piece_cnt=5, spring_constant=0.1, wd=0.0001):
+    def __init__(self, model: ModelWrapper, path_coords: Tensor, target_distances: Tensor = None, spring_constant=-0.001, wd=0.0001):
         """
         Creates a NEB instance that is prepared for evaluating the band.
 
@@ -348,17 +374,10 @@ class NEB():
         self.model = model
 
         # t = torch.cat((start, end), 0)
-        nt = start.new(2, *start.shape)
-        nt[0][:] = start
-        nt[1][:] = end
-        a, b = equal({
-            'path_coords': nt,
-            'target_distances': torch.ones(1)
-        }, equal_piece_cnt)
+        
+        self.path_coords = path_coords.clone()
 
-        # t = [lerp(start, end, x) for x in torch.linspace(0, 1, equal_piece_cnt)]
-        self.path_coords = a.cuda()
-        self.target_distances = b.cuda()
+        self.target_distances = target_distances
         # self.target_distances = torch.zeros(self.path_coords.shape[0] - 1)
         self._check_device()
 
@@ -387,7 +406,7 @@ class NEB():
     def parameters(self):
         return [self.path_coords]
 
-    def apply(self, gradient=False, **kwargs):
+    def apply(self, gradient=True, **kwargs):
         npivots = self.path_coords.shape[0]
         losses = self.path_coords.new(npivots)
 
@@ -429,12 +448,11 @@ class NEB():
                                               1].item(), losses[i].item(), losses[i + 1].item()
 
                 # Compute tangent
-                tangent = self.compute_tangent(
-                    d_next, d_prev, i, l_next, l_prev, loss)
+                tangent = self.compute_tangent(d_next, d_prev, i, l_next, l_prev, loss)
 
                 # Project gradients perpendicular to tangent
-                self.path_coords.grad[i] -= self.path_coords.grad[i].dot(
-                    tangent) * tangent
+                # if self.spring_constant > 0:
+                self.path_coords.grad[i] -= self.path_coords.grad[i].dot(tangent) * tangent
                 # print('grad norm:', self.path_coords.grad[i].norm())
 
                 # assert self.spring_constant > 0
@@ -467,6 +485,54 @@ class NEB():
         else:
             # Tangent to the next
             return (self.path_coords[i + 1] - self.path_coords[i]) / d_next
+
+    def iterate_densely(self, sub_pivot_count=9):
+        dense_pivot_count = (self.path_coords.shape[0] - 1) * (sub_pivot_count + 1) + 1
+        alphas = linspace(0, 1, sub_pivot_count + 2)[:-1].to(self.path_coords.device)
+        for i in pbar(range(dense_pivot_count), "Saddle analysis"):
+            base_pivot = i // (sub_pivot_count + 1)
+            sub_pivot = i % (sub_pivot_count + 1)
+
+            if sub_pivot == 0:
+                # Coords of pivot
+                coords = self.path_coords[base_pivot]
+            else:
+                # Or interpolation between pivots
+                alpha = alphas[sub_pivot]
+                coords = self.path_coords[base_pivot] * (1 - alpha) + self.path_coords[base_pivot + 1] * alpha
+
+            # Retrieve values from model analysis
+            self.model.set_coords_no_grad(coords)
+            yield i
+
+    def analyse(self, sub_pivot_count=9):
+        # Collect stats here
+        analysis = {}
+
+        dense_pivot_count = (self.path_coords.shape[0] - 1) * (sub_pivot_count + 1) + 1
+        for i in self.iterate_densely(sub_pivot_count):
+            point_analysis = self.model.analyse()
+            for key, value in point_analysis.items():
+                dense_key = "dense_" + key
+                if not isinstance(value, Tensor):
+                    value = Tensor([value]).squeeze()
+                if dense_key not in analysis:
+                    analysis[dense_key] = value.new(dense_pivot_count, *value.shape)
+                analysis[dense_key][i] = value
+
+        # Compute saddle values
+        for key, value in list(analysis.items()):
+            if len(value.shape) == 1 or value.shape[1] == 1:
+                analysis[key.replace("dense_", "saddle_")] = value.max().item()
+            else:
+                print(key)
+
+        # Compute lengths
+        end_to_end_distance = (self.path_coords[-1] - self.path_coords[0]).norm(2)
+        analysis["lengths"] = (self.path_coords[1:] - self.path_coords[:-1]).norm(2, 1) / end_to_end_distance
+        analysis["length"] = end_to_end_distance
+
+        return analysis
 
 
 def construct_wrapper(net):
@@ -507,3 +573,14 @@ def lerp(A, B, t): # 0 -> A, 1 -> B
     return A + (B - A) * t
 
 def cat(*args): return '/'.join(args)
+
+def eval_coord(wra: ModelWrapper, coord: Tensor):
+    import dataloader
+    import evaluation
+    wra.set_coords_no_grad(coord)
+    wra.model.eval()
+    trainloader, testloader = dataloader.load_dataset()
+    trloss, tracc = evaluation.eval_loss(wra.model.model.model, CrossEntropyLoss(), trainloader)
+    teloss, teacc = evaluation.eval_loss(wra.model.model.model, CrossEntropyLoss(), testloader)
+    return trloss, tracc, teloss, teacc
+    

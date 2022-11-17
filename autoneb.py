@@ -24,6 +24,7 @@ from torch import nn
 from math import sqrt
 from typing import Iterable, Dict, Union
 from torch.optim.lr_scheduler import StepLR
+from fill import highest
 from wrappers import *
 
 
@@ -61,69 +62,94 @@ if __name__ == '__main__':
     net_container = construct_wrapper(net)
 
     net_container.to('cuda')
+    net_container.model.batch_size = 512
 
     
     trainloader, testloader = dataloader.load_dataset()
     net.load_state_dict(torch.load(args.model1)['state_dict'])
     coord1 = net_container.get_coords()
-    # trloss, tracc = evaluation.eval_loss(net_container.model.model.model, CrossEntropyLoss(), trainloader)
-    # print(trloss,tracc)
-    # trloss, tracc = evaluation.eval_loss(net_container.model.model.model, CrossEntropyLoss(), testloader)
-    # print(trloss,tracc)
-    # n2 = construct_wrapper
 
     net.load_state_dict(torch.load(args.model2)['state_dict'])
     coord2 = net_container.get_coords()
-    # trloss, tracc = evaluation.eval_loss(net_container.model.model.model, CrossEntropyLoss(), trainloader)
-    # print(trloss,tracc)
-    # trloss, tracc = evaluation.eval_loss(net_container.model.model.model, CrossEntropyLoss(), testloader)
-    # print(trloss,tracc)
-    # exit(0)
+
     assert (coord1 == coord2).sum() != coord1.shape[0]
     print((coord1 == coord2).sum(), '/', coord1.shape)
-    k = -0.1
+    k = float('inf')
 
-    neb = NEB(net_container, coord1, coord2, spring_constant=k)
-    # for i in neb.path_coords:
-        # eval_coord(net_container,i,)
-    # exit(0)
-    neb.path_coords.requires_grad_(True)
+    neb_configs = [
+        (equal, 3),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+        (highest, 2, 'dense_train_loss'),
+    ]
 
-    op = SGD(neb.parameters(), lr=0.04, momentum=0.9)
-    neb.path_coords.requires_grad_(False)
-    sch = StepLR(op, 390 * 30, 0.1, -1)
+    optim_configs = [
+        (0.1, 30),
+        (0.1, 1000),
+        (0.1, 1000),
+        (0.1, 1000),
+        (0.1, 2000),
+        (0.1, 2000),
+        (0.01, 1000),
+        (0.01, 1000),
+        (0.01, 1000),
+        (0.01, 1000),
+        (0.001, 1000),
+        (0.001, 1000),
+        (0.001, 1000),
+        (0.001, 1000),
+    ]
+
+
+    
+    # sch = StepLR(op, 390 * 30, 0.1, -1)
 
     mxl = float('inf')
     true_mxl = float('inf')
     save_cnt = 0
 
-    fdir = f'paths08_07_k={k}'
+    fdir = f'autopaths08_07_k={k}'
     if not os.path.exists(fdir):
         os.mkdir(fdir)
 
-    ms = torch.load(cat('paths08_07_k=0A', 'neb_path3.pkl'))
-    for mi in ms:
-        eval_coord(net_container, mi)
-    # eval_coord(net_container, [0])
-    # eval_coord(net_container, torch.load(cat('paths08_07_k=infA', 'neb_path0.pkl'))[-1])
-    exit(0)
+    res_dict = init_res_dict(coord1, coord2)
 
+    for p, (nc, oc) in enumerate(zip(neb_configs, optim_configs)):
+        t1, t2 = nc[0](res_dict, *nc[1:])
+        res_dict.update({'path_coords': t1, 'target_distances': t2})
+        print(f'Phaze {p}/{len(neb_configs)}')
+        neb = NEB(net_container, res_dict['path_coords'], res_dict['target_distances'], spring_constant=k)
+        neb.path_coords.requires_grad_(True)
+        op = SGD(neb.parameters(), lr=oc[0], momentum=0.9)
+        neb.path_coords.requires_grad_(False)
 
-    
-    for _ in pbar(range(390 * 60), "NEB"):
-        l = neb.apply(True)
-        op.step()
-        sch.step()
-        eval_coord(net_container, neb.path_coords[-1])
-        exit(0)
-        if l < mxl * 0.9:
-            torch.save(neb.path_coords, cat(fdir, f'neb_path{save_cnt}.pkl'))
-            save_cnt += 1
-            mxl = l
-            pin(f"step {_}, loss: {l}")
-        if l < true_mxl:
-            true_mxl = l
-            torch.save(neb.path_coords, cat(fdir, f'minpath.pkl'))
+        for _ in pbar(range(oc[1]), 'NEB'):
+            l = neb.apply(True)
+            op.step()
+            if l < mxl * 0.9:
+                torch.save(neb.path_coords, cat(fdir, f'path{save_cnt}.pkl'))
+                save_cnt += 1
+                mxl = l
+                pin(f"step {_}, loss: {l}")
+            if l < true_mxl:
+                true_mxl = l
+                torch.save(neb.path_coords, cat(fdir, f'min.pkl'))
+        res_dict.update({"path_coords": neb.path_coords.clone().to("cpu")})
+        analysis = neb.analyse(9)
+        saddle_analysis = {key: value for key, value in analysis.items() if "saddle_" in key}
+        logger.debug(f"Found saddle: {saddle_analysis}.")
+        res_dict.update(analysis)
+
 
 
     # torch.save(neb.path_coords, f'paths2/neb_path_final.pkl')
