@@ -13,6 +13,8 @@ from wrappers import *
 def plot_curve(points, acc, savePath=''):
     points = np.array(points)
     print(points.shape)
+    print('acc len:', len(acc))
+    print(acc[:100])
 
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -85,19 +87,27 @@ if __name__ == '__main__':
             try:
                 m = torch.load(cat(scandir, k))
                 li = []
+                accsave = cat(scandir, k + '.acc')
                 for mi in m:
-                    # wra.set_coords_no_grad(mi)
-                # net.load_state_dict(m['state_dict'])
-                    li.append(list(eval_coord(wra, mi)))
                     coords.append(mi.cpu().numpy())
-                with open(cat(scandir, k + '.acc'), 'wb') as f:
-                    pickle.dump(li, f)
+
+                if os.path.exists(accsave):
+                    with open(accsave, 'rb') as f:
+                        li = pickle.load(f)
+                else:
+                    for mi in m:
+                        # wra.set_coords_no_grad(mi)
+                    # net.load_state_dict(m['state_dict'])
+                        li.append(list(eval_coord(wra, mi)))
+                    with open(accsave, 'wb') as f:
+                        pickle.dump(li, f)
                 acc.extend(li)
                 pin(f"{cat(scandir, k)}: {li}")
 
             except:
                 traceback.print_exc()
-    # coords = np.array(coords)
+
+    coords = np.array(coords)
     # with open('vgg9_33G.pkl', 'wb') as f:
     #     pickle.dump((coords, acc), f)
     # print('loading...')
@@ -112,12 +122,13 @@ if __name__ == '__main__':
     pca = PCA(n_components=3)
     pca.fit(coords)
     ax = pca.components_[:3]
-    pos = []
 
     acc = [x[3] for x in acc]
 
-    # for i in coords:
-    #     pos.append([i.dot(x) for x in ax])
+    pos = []
+
+    for i in coords:
+        pos.append([i.dot(x) for x in ax])
     # with open('direct3.pkl', 'wb') as f:
     #     pickle.dump(ax, f)
     # with open('projected.pkl', 'wb') as f:

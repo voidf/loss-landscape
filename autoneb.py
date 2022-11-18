@@ -94,7 +94,7 @@ if __name__ == '__main__':
     ]
 
     optim_configs = [
-        (0.1, 30),
+        (0.1, 1000),
         (0.1, 1000),
         (0.1, 1000),
         (0.1, 1000),
@@ -129,6 +129,8 @@ if __name__ == '__main__':
         res_dict.update({'path_coords': t1, 'target_distances': t2})
         print(f'Phaze {p}/{len(neb_configs)}')
         neb = NEB(net_container, res_dict['path_coords'], res_dict['target_distances'], spring_constant=k)
+
+        
         neb.path_coords.requires_grad_(True)
         op = SGD(neb.parameters(), lr=oc[0], momentum=0.9)
         neb.path_coords.requires_grad_(False)
@@ -144,6 +146,8 @@ if __name__ == '__main__':
             if l < true_mxl:
                 true_mxl = l
                 torch.save(neb.path_coords, cat(fdir, f'min.pkl'))
+            # analysis = neb.analyse(9)
+            
         res_dict.update({"path_coords": neb.path_coords.clone().to("cpu")})
         analysis = neb.analyse(9)
         saddle_analysis = {key: value for key, value in analysis.items() if "saddle_" in key}

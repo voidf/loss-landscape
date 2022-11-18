@@ -1,3 +1,4 @@
+import multiprocessing
 import queue
 import threading
 from fill import equal
@@ -103,6 +104,12 @@ class CompareModel(Module):
             CompareModel.LOSS: loss,
         }
 
+def parallel_eval(q: multiprocessing.Queue, model: CompareModel, batch: list, ds_length: int):
+    result = model.analyse(*batch)
+    for k, v in result.items():
+        result[k] = v * batch[0].shape[0] / ds_length
+    q.put(result)
+    
 
 class DataModel(Module):  # 用来喂数据的包装Model的类
     def __init__(self, model: CompareModel, datasets: Dict[str, Union[Dataset, DataLoader]], bs=128):
@@ -170,16 +177,25 @@ class DataModel(Module):  # 用来喂数据的包装Model的类
     def analyse(self):
         # Go through all data points and accumulate stats
         analysis = {}
+        que = multiprocessing.Queue()
         for ds_name, dataset in self.datasets.items():
+            pool = multiprocessing.Pool(4)
             ds_length = len(dataset)
+            cnt = 0
             for batch in ensure_data_loader(dataset, batch_size=self.batch_size):
+                pool.apply_async(parallel_eval, args=(que,self.model,batch,ds_length))
                 batch = self.batch_to_device(batch)
-                result = self.model.analyse(*batch)
+                cnt += 1
+            pool.close()
+            pool.join()
+            for _ in range(cnt):
+                # result = self.model.analyse(*batch)
+                result = que.get()
                 for key, value in result.items():
                     ds_key = f"{ds_name}_{key}"
                     if ds_key not in analysis:
                         analysis[ds_key] = 0
-                    analysis[ds_key] += value * batch[0].shape[0] / ds_length
+                    analysis[ds_key] += value
         return analysis
 
 
@@ -365,7 +381,7 @@ def init_res_dict(start: Tensor, end: Tensor):
 
 
 class NEB():
-    def __init__(self, model: ModelWrapper, path_coords: Tensor, target_distances: Tensor = None, spring_constant=-0.001, wd=0.0001):
+    def __init__(self, model: ModelWrapper, path_coords: Tensor, target_distances: Tensor = None, spring_constant=float('inf'), wd=0.0001):
         """
         Creates a NEB instance that is prepared for evaluating the band.
 
@@ -458,8 +474,7 @@ class NEB():
                 # assert self.spring_constant > 0
                 if self.spring_constant < float("inf"):
                     # Spring force parallel to tangent
-                    t: Tensor = ((d_prev - td_prev) - (d_next - td_next)
-                                 ) * self.spring_constant * tangent
+                    t: Tensor = ((d_prev - td_prev) - (d_next - td_next)) * self.spring_constant * tangent
                     self.path_coords.grad[i] += t
                     # print('t:', t.norm())
             print('distance max:', distances.max())

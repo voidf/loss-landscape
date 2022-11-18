@@ -17,3 +17,8 @@ res56 20
 res20 30
 dense121 120
 resnet56_noshort 70
+
+训练一个新的模型：
+py main.py --save=要保存的文件夹名字 --rand_seed=整数种子，起个好记点的，比如114514 -m=参见cifar10\model_loader.py里面的描述
+例子：
+py main.py --save=vggs1 --rand_seed=1001 -m=vggs
