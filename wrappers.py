@@ -589,12 +589,13 @@ def lerp(A, B, t): # 0 -> A, 1 -> B
 
 def cat(*args): return '/'.join(args)
 
-def eval_coord(wra: ModelWrapper, coord: Tensor):
+def eval_coord(wra: ModelWrapper, coord: Tensor, trainloader=None, testloader=None):
     import dataloader
     import evaluation
     wra.set_coords_no_grad(coord)
     wra.model.eval()
-    trainloader, testloader = dataloader.load_dataset()
+    if trainloader is None:
+        trainloader, testloader = dataloader.load_dataset()
     trloss, tracc = evaluation.eval_loss(wra.model.model.model, CrossEntropyLoss(), trainloader)
     teloss, teacc = evaluation.eval_loss(wra.model.model.model, CrossEntropyLoss(), testloader)
     return trloss, tracc, teloss, teacc

@@ -36,18 +36,18 @@ if __name__ == '__main__':
     parser.add_argument('-k', type=int, default=5, help='elastic constant')
     parser.add_argument('--npivots', '-n', type=int, default=5, help='number of pivots')
 
-    parser.add_argument('--model', '-m', default='vgg9', help='model type')
+    # parser.add_argument('--model', '-m', default='vgg9', help='model type')
     parser.add_argument('--model_folder', '-mf', default='', help='model folder')
-    # parser.add_argument('--model', '-m', default='resnet56', help='model type')
+    parser.add_argument('--model', '-m', default='resnet56', help='model type')
 
-    parser.add_argument('--model1', default='tn08/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 1')
-    parser.add_argument('--model2', default='tn07/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 2')
-
-
+    # parser.add_argument('--model1', default='tn08/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 1')
+    # parser.add_argument('--model2', default='tn07/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 2')
 
 
-    # parser.add_argument('--model1', default='R56_01/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 1')
-    # parser.add_argument('--model2', default='R56_02/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 2')
+
+
+    parser.add_argument('--model1', default='R56_01/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 1')
+    parser.add_argument('--model2', default='R56_02/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7', help='model 2')
 
     args = parser.parse_args()
 
@@ -118,7 +118,7 @@ if __name__ == '__main__':
     true_mxl = float('inf')
     save_cnt = 0
 
-    fdir = f'autopaths08_07_k={k}'
+    fdir = f'autopaths_{args.model}_01_02_k={k}'
     if not os.path.exists(fdir):
         os.mkdir(fdir)
 
@@ -166,7 +166,7 @@ if __name__ == '__main__':
     # }))
 
 
-
+    torch.save(neb.path_coords, cat(fdir, f'fin.pkl'))
     f.close()
 
 
