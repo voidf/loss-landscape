@@ -98,6 +98,7 @@ if __name__ == '__main__':
     network_type = 'vgg9'
     net = load(network_type)
     mode = 1
+    workers = 5
 
     wra = construct_wrapper(net)
 
@@ -108,7 +109,7 @@ if __name__ == '__main__':
         fi.flush()
 
     mng = mp.Manager()
-    q1 = mng.Queue(maxsize=4)
+    q1 = mng.Queue(maxsize=workers)
     q2 = mng.Queue()
     
     # 进程池
@@ -117,7 +118,7 @@ if __name__ == '__main__':
             args=(network_type, q1, q2), kwargs={
                 # 'dataset': 'mnist', 'raw_data': True
             }
-        ) for _ in range(4)
+        ) for _ in range(workers)
     ]
 
     # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
@@ -131,9 +132,10 @@ if __name__ == '__main__':
     from net_plotter import create_random_direction, set_weights
 
     paramap = {}
+    amount = 0.8
     for k, v in net.named_modules():
         if isinstance(v, nn.modules.conv._ConvNd):
-            paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, 0.4)
+            paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, amount)
         elif isinstance(v, nn.Linear):
             paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, 1.0)
 
@@ -159,8 +161,8 @@ if __name__ == '__main__':
         #             dx[ind][k].mul_(0)
         #             dy[ind][k].mul_(0) # 反选
         # else:
-            # dx[ind].mul_(0)
-            # dy[ind].mul_(0)
+        #     dx[ind].mul_(0)
+        #     dy[ind].mul_(0)
 
     for x in consumers:
         x.start()
@@ -187,7 +189,9 @@ if __name__ == '__main__':
         x, *res = q2.get()
         accli[x] = res
 
-    torch.save(accli, projdir('acc_line.dict'))
+    if not os.path.exists(projdir(f'amount={amount}')):
+        os.mkdir(projdir(f'amount={amount}'))
+    torch.save(accli, projdir(f'amount={amount}', 'acc_line.dict'))
     # acc.extend(accli)
     # pin(f"{cat(scandir, k)}: {accli}")
 
