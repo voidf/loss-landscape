@@ -10,7 +10,7 @@ def get_relative_path(file):
     return os.path.join(script_dir, file)
 
 
-def load_dataset(dataset='cifar10', datapath='cifar10/data', batch_size=128, \
+def load_dataset(dataset='cifar10', datapath=..., batch_size=128, \
                  threads=2, raw_data=False, data_split=1, split_idx=0, \
                  trainloader_path="", testloader_path=""):
     """
@@ -36,47 +36,58 @@ def load_dataset(dataset='cifar10', datapath='cifar10/data', batch_size=128, \
 
     assert split_idx < data_split, 'the index of data partition should be smaller than the total number of split'
 
+    normalize = transforms.Normalize(mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
+                                        std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+    if raw_data:
+        transform = transforms.Compose([
+            transforms.ToTensor()
+        ])
+    else:
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            normalize,
+        ])
+
     if dataset == 'cifar10':
-        normalize = transforms.Normalize(mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
-                                         std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+        if datapath is Ellipsis: datapath = 'cifar10/data'
 
         data_folder = get_relative_path(datapath)
-        if raw_data:
-            transform = transforms.Compose([
-                transforms.ToTensor()
-            ])
-        else:
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-                normalize,
-            ])
 
         trainset = torchvision.datasets.CIFAR10(root=data_folder, train=True,
                                                 download=True, transform=transform)
-        # If data_split>1, then randomly select a subset of the data. E.g., if datasplit=3, then
-        # randomly choose 1/3 of the data.
-        if data_split > 1:
-            indices = torch.tensor(np.arange(len(trainset)))
-            data_num = len(trainset) // data_split # the number of data in a chunk of the split
-
-            # Randomly sample indices. Use seed=0 in the generator to make this reproducible
-            state = np.random.get_state()
-            np.random.seed(0)
-            indices = np.random.choice(indices, data_num, replace=False)
-            np.random.set_state(state)
-
-            train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)
-            train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                                       sampler=train_sampler,
-                                                       shuffle=False, num_workers=threads)
-        else:
-            kwargs = {'num_workers': threads, 'pin_memory': True}
-            train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                                      shuffle=False, **kwargs)
         testset = torchvision.datasets.CIFAR10(root=data_folder, train=False,
-                                               download=False, transform=transform)
-        test_loader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                                  shuffle=False, num_workers=threads)
+                                               download=True, transform=transform)
+    elif dataset == 'mnist':
+        if datapath is Ellipsis: datapath = 'mnist/data'
+        data_folder = get_relative_path(datapath)
+
+        trainset = torchvision.datasets.MNIST(root=data_folder, train=True,
+                                                download=True, transform=transform)
+        testset = torchvision.datasets.MNIST(root=data_folder, train=False,
+                                               download=True, transform=transform)
+
+    # If data_split>1, then randomly select a subset of the data. E.g., if datasplit=3, then
+    # randomly choose 1/3 of the data.
+    if data_split > 1:
+        indices = torch.tensor(np.arange(len(trainset)))
+        data_num = len(trainset) // data_split # the number of data in a chunk of the split
+
+        # Randomly sample indices. Use seed=0 in the generator to make this reproducible
+        state = np.random.get_state()
+        np.random.seed(0)
+        indices = np.random.choice(indices, data_num, replace=False)
+        np.random.set_state(state)
+
+        train_sampler = torch.utils.data.sampler.SubsetRandomSampler(indices)
+        train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+                                                    sampler=train_sampler,
+                                                    shuffle=False, num_workers=threads)
+    else:
+        kwargs = {'num_workers': threads, 'pin_memory': True}
+        train_loader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+                                                    shuffle=False, **kwargs)
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                                shuffle=False, num_workers=threads)
 
     return train_loader, test_loader
 

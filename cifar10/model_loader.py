@@ -3,7 +3,7 @@ import torch, torchvision
 import cifar10.models.vgg as vgg
 import cifar10.models.resnet as resnet
 import cifar10.models.densenet as densenet
-
+import cifar10.models.cnn as cnn
 # map between model name and function
 models = {
     'vggs'                  : vgg.VGGS,
@@ -36,6 +36,7 @@ models = {
     'wrn56_8_noshort'       : resnet.WRN56_8_noshort,
     'wrn110_2_noshort'      : resnet.WRN110_2_noshort,
     'wrn110_4_noshort'      : resnet.WRN110_4_noshort,
+    'lenet'                 : cnn.LeNet,
 }
 
 def load(model_name, model_file=None, data_parallel=False):

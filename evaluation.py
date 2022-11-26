@@ -54,11 +54,11 @@ def epoch_dispatcher(net: nn.Module, q: mp.Queue, rank: int):
     # return 
 
         # for batch_idx, (inputs, targets) in enumerate(trainloader):
-def epoch_consumer(network_type: str, tasks: mp.Queue, results: mp.Queue, cuda_device=0):
+def epoch_consumer(network_type: str, tasks: mp.Queue, results: mp.Queue, cuda_device=0, **datasetkws):
     """消费者侧并发，建议使用"""
     net = load(network_type)
     net.cuda(cuda_device)
-    trainloader, testloader = load_dataset(threads=1)
+    trainloader, testloader = load_dataset(threads=1, **datasetkws)
     criterion = nn.CrossEntropyLoss()
     while 1:
         task: Tuple[int, Mapping[str, Any]] = tasks.get()

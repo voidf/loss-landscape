@@ -14,6 +14,15 @@
             "justMyCode": false
         },
         {
+            "name": "Python: train lenet",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": ["--save=lenet1", "--rand_seed=1011", "-m=lenet", "--dataset=mnist"],
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "Python: Current File",
             "type": "python",
             "request": "launch",

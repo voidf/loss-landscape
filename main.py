@@ -162,6 +162,8 @@ if __name__ == '__main__':
     parser.add_argument('--raw_data', action='store_true', default=False, help='do not normalize data')
     parser.add_argument('--noaug', default=False, action='store_true', help='no data augmentation')
     parser.add_argument('--label_corrupt_prob', type=float, default=0.0)
+    
+    parser.add_argument('--dataset', default='cifar10', help='dataset type [cifar10/mnist]')
     parser.add_argument('--trainloader', default='', help='path to the dataloader with random labels')
     parser.add_argument('--testloader', default='', help='path to the testloader with random labels')
 
