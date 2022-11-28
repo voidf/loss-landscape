@@ -87,7 +87,6 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
     t = datetime.datetime.now()
 
     with torch.no_grad():
-        # net.share_memory()
         correct = 0
         total_loss = 0
         total = 0 # number of samples
@@ -96,22 +95,7 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
         # if use_cuda:
         net.cuda()
         net.eval()
-        # net.cpu()
 
-        # mng = mp.Manager()
-        # tasks = mng.Queue()
-        # dist = mng.Queue()
-
-        # pool = mp.Pool(pool_size)
-        # results = [
-        #     mp.Process(
-        #         target=batch_dispatcher,
-        #         args=(net, tasks, dist),
-        #         error_callback=err_print_exc
-        #     ) for _ in range(pool_size)
-        # ]
-        # for proc in results:
-            # proc.start()
         if isinstance(criterion, nn.CrossEntropyLoss):
             for batch_idx, (inputs, targets) in enumerate(loader):
                 batch_size = inputs.size(0)
@@ -134,11 +118,9 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
             # pool.join()
             # tasks.join()
                 loss = criterion(outputs, targets)
+                total_loss += loss.item()*batch_size
                 _, predicted = torch.max(outputs.data, 1)
                 acc = predicted.eq(targets).sum().item()
-            # for _ in range(num_batch):
-                # loss, acc = dist.get()
-                total_loss += loss
                 correct += acc
             
 
@@ -154,9 +136,7 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
                 one_hot_targets = Variable(one_hot_targets)
                 if use_cuda:
                     inputs, one_hot_targets = inputs.cuda(), one_hot_targets.cuda()
-                outputs = F.softmax(net(inputs,
-                #  batch_idx, 2, ckp_prefix
-                ))
+                outputs = F.softmax(net(inputs))
                 loss = criterion(outputs, one_hot_targets)
                 total_loss += loss.item()*batch_size
                 _, predicted = torch.max(outputs.data, 1)

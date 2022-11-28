@@ -95,14 +95,18 @@ def apply(weights, amount=0.0, round_to=1, p=1)->  Sequence[int]:  # return inde
 
 if __name__ == '__main__':
     # network_type = 'lenet'
-    network_type = 'vgg9'
+    # network_type = 'vgg9'
+    # network_type = 'resnet56'
+    network_type = 'resnet56_noshort'
+    resolution = 20
+    mo = 'no' # no line rev
+    scale = 0.05
+    amount = 0.4
+    fn = f'acc_{mo}_{scale}x{resolution}.dict'
     net = load(network_type)
-    mode = 1
     workers = 5
-
-    wra = construct_wrapper(net)
-
     fi = open('logs.txt', mode='a')
+
     def pin(x: str):
         logger.info(x)
         fi.write(x + '\t' + str(datetime.now()) + '\n')
@@ -122,7 +126,10 @@ if __name__ == '__main__':
     ]
 
     # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('R56_01', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('R56N_04', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    proj = ('R56N_DL',)
     projdir = partial(cat, *proj)
 
     t7 = torch.load(projdir('model_300.t7'))
@@ -132,42 +139,48 @@ if __name__ == '__main__':
     from net_plotter import create_random_direction, set_weights
 
     paramap = {}
-    amount = 0.8
-    for k, v in net.named_modules():
-        if isinstance(v, nn.modules.conv._ConvNd):
-            paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, amount)
-        elif isinstance(v, nn.Linear):
-            paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, 1.0)
+    if mo != 'no':
+        for k, v in net.named_modules():
+            if isinstance(v, nn.modules.conv._ConvNd):
+                paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, amount)
+            elif mo == 'line' and isinstance(v, nn.Linear):
+                paramap[k + '.bias'] = paramap[k + '.weight'] = apply(v.weight, 1.0)
 
             # 把偏差也干掉
 
     pin(f'Seed: {torch.seed()}')
-    # dx = create_random_direction(net)
-    # dy = create_random_direction(net)
+    if not os.path.exists(projdir('x.direction')):
+        dx = create_random_direction(net)
+        dy = create_random_direction(net)
 
-    # torch.save(dx, projdir('x.direction'))
-    # torch.save(dy, projdir('y.direction'))
-    dx = torch.load(projdir('x.direction'))
-    dy = torch.load(projdir('y.direction'))
+        torch.save(dx, projdir('x.direction'))
+        torch.save(dy, projdir('y.direction'))
+    else:
+        dx = torch.load(projdir('x.direction'))
+        dy = torch.load(projdir('y.direction'))
 
-    for ind, (name, param) in enumerate(net.named_parameters()):
-        if name in paramap:
-            for k in paramap[name]:
-                dx[ind][k].mul_(0)
-                dy[ind][k].mul_(0) # 冻住“不重要的参数”
-        # if name in paramap:
-        #     for k in range(len(dx[ind])):
-        #         if k not in paramap[name]:
-        #             dx[ind][k].mul_(0)
-        #             dy[ind][k].mul_(0) # 反选
-        # else:
-        #     dx[ind].mul_(0)
-        #     dy[ind].mul_(0)
+
+    if mo == 'rev':
+        for ind, (name, param) in enumerate(net.named_parameters()):
+            if name in paramap:
+                for k in range(len(dx[ind])):
+                    if k not in paramap[name]:
+                        dx[ind][k].mul_(0)
+                        dy[ind][k].mul_(0) # 反选
+            else:
+                dx[ind].mul_(0)
+                dy[ind].mul_(0)
+    else:
+        for ind, (name, param) in enumerate(net.named_parameters()):
+            if name in paramap:
+                for k in paramap[name]:
+                    dx[ind][k].mul_(0)
+                    dy[ind][k].mul_(0) # 冻住“不重要的参数”
 
     for x in consumers:
         x.start()
 
-    resolution = 10
+
 
     needle = copy.deepcopy(net)
 
@@ -175,7 +188,7 @@ if __name__ == '__main__':
 
     for x in range(-resolution, resolution + 1):
         for y in range(-resolution, resolution + 1):
-            set_weights(needle, get_weights(net), (dx, dy), (x, y))
+            set_weights(needle, get_weights(net), (dx, dy), (x * scale, y * scale))
             tasksiz += 1
             q1.put(((x, y), copy.deepcopy(needle.state_dict())))
     accli = {}
@@ -191,7 +204,7 @@ if __name__ == '__main__':
 
     if not os.path.exists(projdir(f'amount={amount}')):
         os.mkdir(projdir(f'amount={amount}'))
-    torch.save(accli, projdir(f'amount={amount}', 'acc_line.dict'))
+    torch.save(accli, projdir(f'amount={amount}', fn))
     # acc.extend(accli)
     # pin(f"{cat(scandir, k)}: {accli}")
 
