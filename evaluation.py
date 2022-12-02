@@ -106,17 +106,6 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
                 inputs, targets = inputs.cuda(), targets.cuda()
                 inputs: torch.Tensor
                 outputs = net(inputs)
-                # inputs = inputs.detach()
-                # targets = targets.detach()
-                # tasks.put((inputs, targets))
-            # for x in range(pool_size):
-                # tasks.put((None, None))
-            # for proc in results:
-                # proc.join()
-
-            # pool.close()
-            # pool.join()
-            # tasks.join()
                 loss = criterion(outputs, targets)
                 total_loss += loss.item()*batch_size
                 _, predicted = torch.max(outputs.data, 1)
@@ -142,5 +131,5 @@ def eval_loss(net, criterion, loader, use_cuda=True, pool_size=2):
                 _, predicted = torch.max(outputs.data, 1)
                 correct += predicted.cpu().eq(targets).sum().item()
 
-    print(f'correct: {correct}/{total}, time:', (datetime.datetime.now()-t).total_seconds())
-    return (total_loss/total).item(), 100.*correct/total
+    print(f'correct: {correct}/{total}, time:', (datetime.datetime.now()-t).total_seconds(), 'loss:', total_loss/total)
+    return total_loss/total, 100.*correct/total

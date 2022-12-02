@@ -16,64 +16,7 @@ from net_plotter import get_weights
 from wrappers import *
 import torch.multiprocessing as mp
 import evaluation
-
-def plot_curve(points, acc, name = '3D_curve', savePath='figures_autopath/3d_PCA', mode=3):
-    points = np.array(points)
-    print(points.shape)
-    print('acc len:', len(acc))
-    print(acc[:100])
-
-    fig = plt.figure()
-    match mode:
-        case 3:
-            ax = fig.add_subplot(projection='3d')
-        case 2:
-            ax = fig.add_subplot()
-        case 1:
-            ax = fig.add_subplot()
-
-    # color = np.linspace(0, points.shape[0] - 1, points.shape[0], dtype=float)
-    cblue = np.array([.0, .0, 255.0])
-    cred = np.array([255.0, 0.0, 0.0])
-
-    def make_color(x):
-        return '#%02x%02x%02x' % tuple(int(i) for i in x)
-
-    col = copy.deepcopy(acc)
-
-    for p, i in enumerate(acc):
-        col[p] = make_color(lerp(cred, cblue, i / 100.0))
-
-    # x, y, z = points.T
-
-    #ax.scatter(
-        #x,
-        #y,
-        #z,
-        #c=color,
-        #s=50,
-    #)
-    # ax.plot(
-    #     x, y, z,
-    #     #c=color,
-    # )
-    match mode:
-        case 3 | 2:
-            ax.scatter(*points.T, c=acc,s=[10+i*10 for i in range(len(acc))],)
-        case 1:
-            ax.scatter(*points.T, c=acc,s=[10+i*10 for i in range(len(acc))],)
-    # plt.scatter(*points.T, c=acc,s=[10+i*10 for i in range(len(acc))],)
-
-    # for i in range(points.shape[0]):
-    #     ax.text(*points[i],s=str(i))
-
-    # ax.set_zlabel('Z Label')
-    # ax.set_xlabel('X Label')
-    # ax.set_ylabel('Y Label')
-
-    # plt.show()
-    #fig.savefig('./3d.png')
-    fig.savefig('/'.join(['.', savePath, name + '_3d_PCA.png']))
+import re
     
 # https://github.com/VainF/Torch-Pruning/issues/49 by @Serjio42
 def round_pruning_amount(total_parameters, n_to_prune, round_to):
@@ -95,16 +38,31 @@ def apply(weights, amount=0.0, round_to=1, p=1)->  Sequence[int]:  # return inde
 
 if __name__ == '__main__':
     # network_type = 'lenet'
-    network_type = 'vgg9'
-    # network_type = 'resnet56'
+    # network_type = 'vgg9'
+    network_type = 'resnet56'
     # network_type = 'resnet56_noshort'
-    resolution = 20
-    mo = 'rev' # no line rev
-    scale = 1.0 / resolution
-    amount = 0.4
-    fn = f'acc_{mo}_{scale}x{resolution}.dict'
+
+    fn = f'acc_line_0.1x10.dict'
+    # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    proj = ('R56_01', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('R56N_04', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('R56N_DL',)
+    projdir = partial(cat, *proj)
+    amountdir = f'amount=0.4'
+
+    mo, scale, resolution = re.match(r'acc_([a-z]*?)_([0-9\.]*?)x([0-9]*?).dict', fn).groups()
+    scale = float(scale)
+    resolution = int(resolution)
+
+    amount = re.match(r'amount=([0-9\.]*?)$', amountdir).groups()[0]
+    amount = float(amount)
+    accli: dict = torch.load(projdir(amountdir, fn))
+    acclibak = copy.deepcopy(accli)
+
+
     net = load(network_type)
-    workers = 4
+    workers = 5
     fi = open('logs.txt', mode='a')
 
     def pin(x: str):
@@ -125,16 +83,10 @@ if __name__ == '__main__':
         ) for _ in range(workers)
     ]
 
-    # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    # proj = ('R56_01', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    # proj = ('R56N_04', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    # proj = ('R56N_DL',)
-    projdir = partial(cat, *proj)
+
 
     t7 = torch.load(projdir('model_300.t7'))
     net.load_state_dict(t7['state_dict'])
-    accli = []
 
     from net_plotter import create_random_direction, set_weights
 
@@ -186,12 +138,23 @@ if __name__ == '__main__':
 
     tasksiz = 0
 
-    for x in range(-resolution, resolution + 1):
-        for y in range(-resolution, resolution + 1):
-            set_weights(needle, get_weights(net), (dx, dy), (x * scale, y * scale))
-            tasksiz += 1
-            q1.put(((x, y), copy.deepcopy(needle.state_dict())))
-    accli = {}
+    todo = list(accli.keys())
+    while todo:
+        cx, cy = todo.pop()
+        for X, Y in zip([0, 1, 0, -1], [1, 0, -1, 0]):
+            x = cx + X
+            y = cy + Y
+            if (x, y) not in accli:
+                set_weights(needle, get_weights(net), (dx, dy), (x * scale, y * scale))
+                tasksiz+=1
+                q1.put(((x, y), copy.deepcopy(needle.state_dict())))
+
+    # for x in range(-resolution, resolution + 1):
+    #     for y in range(-resolution, resolution + 1):
+    #         set_weights(needle, get_weights(net), (dx, dy), (x * scale, y * scale))
+    #         tasksiz += 1
+    #         q1.put(((x, y), copy.deepcopy(needle.state_dict())))
+    # accli = {}
 
     for _ in consumers:
         q1.put(None)
@@ -204,44 +167,6 @@ if __name__ == '__main__':
 
     if not os.path.exists(projdir(f'amount={amount}')):
         os.mkdir(projdir(f'amount={amount}'))
+    assert (accli.keys() & acclibak.keys()) == acclibak.keys()
     torch.save(accli, projdir(f'amount={amount}', fn))
-    # acc.extend(accli)
-    # pin(f"{cat(scandir, k)}: {accli}")
-
-
-    # coords = np.array(coords)
-
-    # for i in coords:
-    #     i[:] -= coords[-1]
-    # print('PCA...')
-
-    # if mode != 1:
-    #     pca = PCA(n_components=mode)
-    #     pca.fit(coords)
-    #     ax = pca.components_[:mode]
-    # else:
-    #     dire = coords[-1] - coords[0]
-    #     dire = dire / np.sqrt(np.sum(dire**2))
-    #     ax = [dire]
-
-    # acc = [x[3] for x in acc]
-
-    # pos = []
-
-    # for p, i in enumerate(coords):
-    #     if mode == 1:
-    #         pos.append([i.dot(x) for x in ax] + [acc[p]])
-    #     else:
-    #         pos.append([i.dot(x) for x in ax])
-
-            
-
-
-    # print('plotting...')
-    # print(pos, acc)
-    # plot_curve(pos, acc, k, savePath=f"figures_autopath/{mode}d", mode=mode)
     
-    
-
-    # coords = torch.tensor(coords)
-    # torch.save(coords, 'vgg9_all11.pkl')

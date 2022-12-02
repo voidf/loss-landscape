@@ -77,7 +77,6 @@ def plot_2d_contour(surf_file, surf_name='train_loss', vmin=0.1, vmax=10, vlevel
     f.close()
     if show: plt.show()
 
-plot_2d_contour('R56N_01/resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_300.t7_weights_xignore=biasbn_xnorm=filter_yignore=biasbn_ynorm=filter.h5_[-1.0,1.0,51]x[-1.0,1.0,51].h5')
 def plot_trajectory(proj_file, dir_file, show=False):
     """ Plot optimization trajectory on the plane spanned by given directions."""
 

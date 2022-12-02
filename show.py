@@ -8,9 +8,10 @@ import os
 from loguru import logger
 
 config = None
+# fd = r'tn09/vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/amount=0.4'
 # fd = r'R56_01/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/amount=0.4'
-# fd = r'R56N_01/resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/amount=0.4'
-fd = r'R56N_DL/amount=0.4'
+fd = r'R56N_04/resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/amount=0.4'
+# fd = r'R56N_DL/amount=0.4'
 
 
 def _3D_plot(points, fn):

@@ -11,6 +11,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 from torch.autograd import Variable
+from torch.optim.optimizer import Optimizer
 import torch.nn.parallel
 
 from cifar10 import model_loader
@@ -31,7 +32,7 @@ def init_params(net):
                 init.constant_(m.bias, 0)
 
 # Training
-def train(trainloader, net, criterion, optimizer, use_cuda=True):
+def train(trainloader, net, criterion, optimizer: Optimizer, use_cuda=True):
     net.train()
     train_loss = 0
     correct = 0
@@ -249,6 +250,13 @@ if __name__ == '__main__':
         state = {
             'acc': 100 - test_err,
             'epoch': 0,
+            'train_loss': train_loss,
+            'train_err': train_err,
+            'test_loss': test_loss,
+            'optimizer': args.optimizer,
+            'lr': lr,
+            'momentum': args.momentum,
+            'weight_decay': args.weight_decay,
             'state_dict': net.module.state_dict() if args.ngpu > 1 else net.state_dict()
         }
         opt_state = {
@@ -271,6 +279,13 @@ if __name__ == '__main__':
             state = {
                 'acc': acc,
                 'epoch': epoch,
+                'train_loss': loss,
+                'train_err': train_err,
+                'test_loss': test_loss,
+                'optimizer': args.optimizer,
+                'lr': lr,
+                'momentum': args.momentum,
+                'weight_decay': args.weight_decay,
                 'state_dict': net.module.state_dict() if args.ngpu > 1 else net.state_dict(),
             }
             opt_state = {
