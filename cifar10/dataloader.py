@@ -4,6 +4,32 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
+def c10():
+    normalize = transforms.Normalize(
+        mean=[x/255.0 for x in [125.3, 123.0, 113.9]],
+        std=[x/255.0 for x in [63.0, 62.1, 66.7]])
+    return (
+        torch.utils.data.DataLoader(
+            torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
+                                                transform=transforms.Compose([
+                        transforms.RandomCrop(32, padding=4),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.ToTensor(),
+                        normalize,
+                    ]))
+            , batch_size=128, shuffle=True, num_workers=3, pin_memory=True
+        ),
+        torch.utils.data.DataLoader(
+            torchvision.datasets.CIFAR10(root='./data', train=False, download=True,
+                                                transform=transforms.Compose([
+                            transforms.ToTensor(),
+                            normalize,
+                    ]))
+            , batch_size=128, shuffle=False, num_workers=3, pin_memory=True
+        )
+    )
+        
+
 def get_data_loaders(args):
     if args.trainloader and args.testloader:
         assert os.path.exists(args.trainloader), 'trainloader does not exist'
@@ -17,7 +43,7 @@ def get_data_loaders(args):
 
 
 
-    kwargs = {'num_workers': 2, 'pin_memory': True} if args.ngpu else {}
+    kwargs = {'num_workers': 3, 'pin_memory': True} if args.ngpu else {}
 
     if args.dataset == 'cifar10':
         if args.raw_data:

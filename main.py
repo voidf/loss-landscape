@@ -249,6 +249,8 @@ if __name__ == '__main__':
 
         state = {
             'acc': 100 - test_err,
+            'batch_size': args.batch_size,
+            'random_seed': args.rand_seed,
             'epoch': 0,
             'train_loss': train_loss,
             'train_err': train_err,
@@ -278,6 +280,8 @@ if __name__ == '__main__':
         if epoch == 1 or epoch % args.save_epoch == 0 or epoch == 150:
             state = {
                 'acc': acc,
+                'batch_size': args.batch_size,
+                'random_seed': args.rand_seed,
                 'epoch': epoch,
                 'train_loss': loss,
                 'train_err': train_err,

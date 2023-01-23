@@ -95,16 +95,16 @@ def apply(weights, amount=0.0, round_to=1, p=1)->  Sequence[int]:  # return inde
 
 if __name__ == '__main__':
     # network_type = 'lenet'
-    network_type = 'vgg9'
+    # network_type = 'vgg9'
     # network_type = 'resnet56'
-    # network_type = 'resnet56_noshort'
-    resolution = 20
-    mo = 'rev' # no line rev
+    network_type = 'resnet56_noshort'
+    resolution = 10
+    mo = 'no' # no line rev
     scale = 1.0 / resolution
     amount = 0.4
     fn = f'acc_{mo}_{scale}x{resolution}.dict'
     net = load(network_type)
-    workers = 4
+    workers = 5
     fi = open('logs.txt', mode='a')
 
     def pin(x: str):
@@ -126,9 +126,9 @@ if __name__ == '__main__':
     ]
 
     # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    # proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
     # proj = ('R56_01', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
-    # proj = ('R56N_04', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
+    proj = ('R56N_05', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', 'model_10B5')
     # proj = ('R56N_DL',)
     projdir = partial(cat, *proj)
 
