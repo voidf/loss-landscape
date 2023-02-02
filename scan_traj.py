@@ -3,6 +3,7 @@ from datetime import datetime
 from functools import partial
 import json
 import random
+import shutil
 import traceback
 from typing import List, Sequence
 import numpy as np
@@ -41,7 +42,19 @@ def apply(weights, amount=0.0, round_to=1, p=1)->  Sequence[int]:  # return inde
     indices = torch.nonzero(l1_norm <= threshold).view(-1).tolist()
     return indices
 
-def scan():
+
+def scan(
+    arch = 'resnet56',
+    from_epoch = 20,
+    to_epoch = 300,
+    lr = 0.0001,
+    mom = 0.9,
+    wd = 0.0005,
+    bs = 128,
+    opt = 'sgd',
+    seed = 29,
+    base_directory = 'trained/R56_09/resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1/model_20B2'
+):
     # parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
     # parser.add_argument('--batch_size', default=128, type=int)
     # parser.add_argument('--dataset', default='cifar10', help='dataset type [cifar10/mnist]')
@@ -49,36 +62,36 @@ def scan():
 
     # network_type = 'lenet'
     # network_type = 'vgg9'
-    network_type = 'resnet56'
     # network_type = 'resnet56_noshort'
 
 
 
-    from_epoch = 20
-    to_epoch = from_epoch + 300
-    lr = 0.0001
-    mom = 0.9
-    wd = 0.0005
-    bs = 128
-    opt = 'sgd'
-    seed = 29
+    # from_epoch = 20
+    # to_epoch = from_epoch + 300
+    # lr = 0.0001
+    # mom = 0.9
+    # wd = 0.0005
+    # bs = 128
+    # opt = 'sgd'
+    # seed = 29
+
     criterion = nn.CrossEntropyLoss()
 
     # proj = ('lenet1', 'lenet_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
     # proj = ('tn09', 'vgg9_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
     # proj = ('R56N_05', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', 'model_100B3')
-    proj = ('R56_09', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', )
+    # proj = ('R56_09', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', )
     # proj = ('R56N_05', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', 'model_10B5', )
     # proj = ('R56N_04', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1')
     # proj = ('R56N_DL',)
-    projdir = partial(cat, *proj)
+    projdir = partial(cat, base_directory)
 
     # mo, scale, resolution = re.match(r'acc_([a-z]*?)_([0-9\.]*?)x([0-9]*?).dict', fn).groups()
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    net = load(network_type)
+    net = load(arch)
     fi = open('logs.txt', mode='a')
 
     def pin(x: str):
@@ -98,26 +111,34 @@ def scan():
     net.cuda()
     criterion = criterion.cuda()
 
-    if t7.get('optimizer', 'sgd') == 'sgd':
+    if opt == 'sgd':
         optimizer = optim.SGD(net.parameters(), lr=lr, momentum=mom, weight_decay=wd, nesterov=True)
-    else:
+    elif opt == 'adam':
         optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
-    ot7 = torch.load(projdir(f'opt_state_{from_epoch}.t7'))
-    optimizer.load_state_dict(ot7['optimizer'])
+    else:
+        raise NameError("Unknown optimizer name")
+
+    if t7.get('optimizer', '') == opt:
+        ot7 = torch.load(projdir(f'opt_state_{from_epoch}.t7'))
+        optimizer.load_state_dict(ot7['optimizer'])
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
-    idx = 1
-    s = set() # MEX
-    for i in os.listdir(projdir()):
-        if os.path.isdir(projdir(i)) and i.startswith(fn + 'B'):
-            s.add(int(i.rsplit('B', 1)[1]))
-    while idx in s: idx += 1
 
     if not os.path.exists(projdir(f'model_{from_epoch + 1}.t7')):
         branch_dir = '.'
     else:
+        idx = 1
+        s = set() # MEX
+        for i in os.listdir(projdir()):
+            if os.path.isdir(projdir(i)) and i.startswith(fn + 'B'):
+                if len(os.listdir(projdir(i))) == 0:
+                    os.rmdir(projdir(i))
+                else:
+                    s.add(int(i.rsplit('B', 1)[1]))
+        while idx in s: idx += 1
+
         branch_dir = f'{fn}B{idx}'
         os.mkdir(projdir(branch_dir))
         print(f'make dir {projdir(branch_dir)}')
@@ -156,15 +177,15 @@ def scan():
         }
         torch.save(state, projdir(branch_dir, f'model_{e}.t7'))
         torch.save(opt_state, projdir(branch_dir, f'opt_state_{e}.t7'))
-        if e == from_epoch + 10:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = 0.1
-            lr = 0.1
+        # if e == from_epoch + 10:
+        #     for param_group in optimizer.param_groups:
+        #         param_group['lr'] = 0.1
+        #     lr = 0.1
 
-        elif e == from_epoch + 150 or e == from_epoch + 225 or e == from_epoch + 275:
-            for param_group in optimizer.param_groups:
-                param_group['lr'] *= 0.1
-            lr *= 0.1
+        # elif e == from_epoch + 150 or e == from_epoch + 225 or e == from_epoch + 275:
+        #     for param_group in optimizer.param_groups:
+        #         param_group['lr'] *= 0.1
+        #     lr *= 0.1
 
 
 
@@ -185,6 +206,11 @@ def join_weights(li: List[Tensor]) -> Tensor:
         o += sz
     return buf
 
+def t7_to_tensor(arch, fp) -> Tensor:
+    net = load(arch)
+    t7 = torch.load(fp)
+    net.load_state_dict(t7['state_dict'])
+    return join_weights(get_weights(net))
 
 
 
