@@ -9,13 +9,21 @@ from loguru import logger
 from fastapi.middleware.cors import CORSMiddleware
 from concurrent.futures import ProcessPoolExecutor
 from cifar10.model_loader import load
+from net_plotter import get_weights
 from wrappers import cat
-from scan_traj import t7_to_tensor
+from torch import Tensor
+from scan_traj import cat_tensor, get_states, write_states
 
 model_dir = 'trained/'
-pool = None
+# pool = None
 
 from fastapi import FastAPI, Query, Request
+
+def t7_to_tensor(arch, fp) -> Tensor:
+    net = load(arch)
+    t7 = torch.load(fp)
+    net.load_state_dict(t7['state_dict'])
+    return cat_tensor(get_states(net))
 
 def u_resolver(src: list[str], proj: str, pf='model_', sf='.t7') -> list[str]:
     for j in os.listdir(proj):
@@ -135,11 +143,13 @@ class ArgsPCA(BaseModel):
 
 @app.post('/pca')
 async def _(s: ArgsPCA):
+    logger.info(s)
     import numpy as np
     proj = model_dir + s.proj
     pca = PCA(2)
 
     nplist = []
+    # def enum_path():
     for j in os.listdir(proj):
         for i in s.selection:
             path = i.split('/')
@@ -147,21 +157,35 @@ async def _(s: ArgsPCA):
             for p, i in enumerate(path):
                 f, b = i.split('.')
                 path[p] = f'model_{f}B{b}'
-            nplist.append(t7_to_tensor(s.arch, cat(proj, j, *path, m)).numpy())
+            ts = t7_to_tensor(s.arch, cat(proj, j, *path, m)).numpy() # 输出： param + buf
+            nplist.append(ts)
+
+    # for ts in enum_path():
+        # nplist.append(ts)
+    nplist = np.array(nplist)
+    avg = nplist.mean(axis=0)
 
     # pca.fit(nplist)
     logger.debug('nplist len: {}', len(nplist))
-    newlist = pca.fit_transform(np.array(nplist)).tolist()
+    newlist = pca.fit_transform(nplist).tolist()
+    axis: np.ndarray = pca.components_[:2]
+    # for p, it in enumerate(enum_path()):
+        # i = newlist[p]
     for p, i in enumerate(newlist):
+        # D = (nplist[p] - avg)
+        # X = D.dot(axis[0])
+        # Y = D.dot(axis[1])
+        # DX = i[0] - X
+        # DY = i[1] - Y # 等价的，误差在e-07数量级左右
         newlist[p] = {
             'x': i[0],
             'y': i[1],
             'u': s.selection[p],
             'l': cat(*s.selection[p].split('/')[:-1]),
         }
-    axis = pca.components_[:2]
     return {
         'axis': axis.tolist(),
+        'mean': avg.tolist(),
         'coord': newlist
     }
 
@@ -203,10 +227,69 @@ async def _(a: ArgsTrain):
         dire
     )
         
+class ArgsHeatmap(BaseModel):
+    xstep: int
+    ystep: int
+    xstep_rate: float
+    ystep_rate: float
+    arch: str
+    mean: List[float]
+    xdir: List[float]
+    ydir: List[float]
 
+@app.post('/heatmap')
+async def _(a: ArgsHeatmap):
+    from net_plotter import set_weights
+    import torch.multiprocessing as mp
+    import evaluation
+    import copy
+
+    mng = mp.Manager()
+    wk = 4
+    q1 = mng.Queue(maxsize=wk+1)
+    q2 = mng.Queue()
+    consumers = [
+        mp.Process(target=evaluation.epoch_consumer,
+            args=(a.arch, q1, q2)
+        ) for _ in range(wk)
+    ]
+    for x in consumers: x.start()
+
+    net = load(a.arch)
+    a.mean = torch.tensor(a.mean)
+    a.xdir = torch.tensor(a.xdir)
+    a.ydir = torch.tensor(a.ydir)
+
+    write_states(net, a.mean)
+    
+    # needle = copy.deepcopy(net)
+    with torch.no_grad():
+        for x in range(-a.xstep, a.xstep + 1):
+            for y in range(-a.ystep, a.ystep + 1):
+                cur = a.mean + x * a.xstep_rate * a.xdir + y * a.ystep_rate * a.ydir
+                write_states(net, cur)
+                q1.put(((x, y), copy.deepcopy(net.state_dict())))
+            # set_weights(needle, get_weights)
+
+
+    for _ in consumers: q1.put(None)
+    for x in consumers: x.join()
+
+    ret = []
+    for _ in range((2 * a.xstep + 1) * (2 * a.ystep + 1)):
+        (x, y), train_loss, train_acc, test_loss, test_acc = q2.get()
+        ret.append({
+            'x': x * a.xstep_rate,
+            'y': y * a.ystep_rate,
+            'trl': train_loss,
+            'tra': train_acc,
+            'tel': test_loss,
+            'tea': test_acc,
+        })
+    return ret
+    # net = load(a.arch)
 
 
 if __name__ == "__main__":
-    pool = ProcessPoolExecutor(4)
-
+    # pool = ProcessPoolExecutor(4)
     uvicorn.run(app, port=40000)

@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 from functools import partial
+from itertools import chain
 import json
 import random
 import shutil
@@ -194,23 +195,53 @@ def scan(
     # assert (accli.keys() & acclibak.keys()) == acclibak.keys()
     # torch.save(accli, projdir(f'amount={amount}', fn))
 
-def join_weights(li: List[Tensor]) -> Tensor:
+def iterate_params_buffers(net: nn.Module):
+    offset = 0
+    for param in net.parameters():
+        size = reduce(operator.mul, param.data.shape)
+        data = param
+        yield offset, data.data, size, False
+        offset += size
+    for buffer in net.buffers():
+        size = reduce(operator.mul, buffer.shape, 1)
+        yield offset, buffer, size, True
+        offset += size
+
+def iterate_params(net: nn.Module):
+    offset = 0
+    for param in net.parameters():
+        size = reduce(operator.mul, param.data.shape)
+        data = param
+        yield offset, data.data, size, False
+        offset += size
+
+def get_states(net: nn.Module): return [p.data for p in chain(net.parameters(), net.buffers())]
+
+def cat_tensor(li: List[Tensor]) -> Tensor:
     sz = 0
     for p in li:
-        sz += reduce(operator.mul, p.data.shape)
+        sz += reduce(operator.mul, p.data.shape, 1)
     buf = torch.empty(sz, dtype=torch.float32)
     o = 0
     for p in li:
-        sz = reduce(operator.mul, p.data.shape)
+        sz = reduce(operator.mul, p.data.shape, 1)
         buf[o:o+sz] = p.data.view(-1)
         o += sz
     return buf
 
-def t7_to_tensor(arch, fp) -> Tensor:
-    net = load(arch)
-    t7 = torch.load(fp)
-    net.load_state_dict(t7['state_dict'])
-    return join_weights(get_weights(net))
+def write_weights(net: nn.Module, ts: Tensor):
+    for offset, data, size, is_buffer in iterate_params(net):
+        if len(data.shape) == 0:
+            data.fill_(ts[offset:offset + size][0])
+        else:
+            data[:] = ts[offset:offset + size].reshape(data.shape)
+
+def write_states(net: nn.Module, ts: Tensor):
+    for offset, data, size, is_buffer in iterate_params_buffers(net):
+        if len(data.shape) == 0:
+            data.fill_(ts[offset:offset + size][0])
+        else:
+            data[:] = ts[offset:offset + size].reshape(data.shape)
 
 
 
@@ -226,15 +257,15 @@ def calc():
     dx = torch.load(r'E:\loss-landscape\R56N_05\resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1\model_10B5\x.direction')
     dy = torch.load(r'E:\loss-landscape\R56N_05\resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1\model_10B5\y.direction')
 
-    dx = join_weights(dx)
-    dy = join_weights(dy)
+    dx = cat_tensor(dx)
+    dy = cat_tensor(dy)
 
     target = r'E:\loss-landscape\R56N_05\resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1\model_10B5\model_300.t7'
 
     O = torch.load(target)
     net.load_state_dict(O['state_dict'])
     del O
-    w = join_weights(get_weights(net))
+    w = cat_tensor(get_weights(net))
     with torch.no_grad():
         w=w.cuda()
         dx=dx.cuda()
@@ -254,7 +285,7 @@ def calc():
         for n in sorted(nil):
             t7 = torch.load(projdir(f'model_{n}.t7'))
             net.load_state_dict(t7['state_dict'])
-            v = join_weights(get_weights(net))
+            v = cat_tensor(get_weights(net))
             v = v.cuda()
             dist = v - w
             tx = dist.dot(dx) / nm # 在dx的尺度上的比例
@@ -303,7 +334,7 @@ def draw():
                 t7 = torch.load(projdir(pf, cd))
                 net.load_state_dict(t7['state_dict'])
                 t7.pop('state_dict')
-                v = join_weights(get_weights(net)).numpy()
+                v = cat_tensor(get_weights(net)).numpy()
                 li.append(v)
                 metas.append(t7)
                 if ind and t7['lr'] != metas[-2]['lr']:
