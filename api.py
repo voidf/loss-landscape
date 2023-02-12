@@ -1,3 +1,6 @@
+from cmath import isnan
+from http.client import HTTPException
+import math
 from typing import List
 import fastapi
 import os
@@ -144,6 +147,8 @@ class ArgsPCA(BaseModel):
 @app.post('/pca')
 async def _(s: ArgsPCA):
     logger.info(s)
+    if len(s.selection) == 0:
+        raise HTTPException(400, 'empty selection')
     import numpy as np
     proj = model_dir + s.proj
     pca = PCA(2)
@@ -278,6 +283,8 @@ async def _(a: ArgsHeatmap):
     ret = []
     for _ in range((2 * a.xstep + 1) * (2 * a.ystep + 1)):
         (x, y), train_loss, train_acc, test_loss, test_acc = q2.get()
+        if math.isnan(train_loss) or math.isnan(test_loss):
+            continue
         ret.append({
             'x': x * a.xstep_rate,
             'y': y * a.ystep_rate,
@@ -286,6 +293,7 @@ async def _(a: ArgsHeatmap):
             'tel': test_loss,
             'tea': test_acc,
         })
+    logger.debug(ret)
     return ret
     # net = load(a.arch)
 

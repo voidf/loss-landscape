@@ -203,7 +203,9 @@ def iterate_params_buffers(net: nn.Module):
         yield offset, data.data, size, False
         offset += size
     for buffer in net.buffers():
-        size = reduce(operator.mul, buffer.shape, 1)
+        if len(buffer.shape) == 0:
+            continue # 跳过num_batches_tracked
+        size = reduce(operator.mul, buffer.shape)
         yield offset, buffer, size, True
         offset += size
 
@@ -215,16 +217,20 @@ def iterate_params(net: nn.Module):
         yield offset, data.data, size, False
         offset += size
 
-def get_states(net: nn.Module): return [p.data for p in chain(net.parameters(), net.buffers())]
+def get_states(net: nn.Module): 
+    # for n, p in chain(net.named_parameters(), net.named_buffers()):
+        # if len(p.shape) == 0:
+            # print(n, p.shape)
+    return [p.data for n, p in chain(net.named_parameters(), net.named_buffers()) if not n.endswith('num_batches_tracked')]
 
 def cat_tensor(li: List[Tensor]) -> Tensor:
     sz = 0
     for p in li:
-        sz += reduce(operator.mul, p.data.shape, 1)
+        sz += reduce(operator.mul, p.data.shape)
     buf = torch.empty(sz, dtype=torch.float32)
     o = 0
     for p in li:
-        sz = reduce(operator.mul, p.data.shape, 1)
+        sz = reduce(operator.mul, p.data.shape)
         buf[o:o+sz] = p.data.view(-1)
         o += sz
     return buf
@@ -239,7 +245,8 @@ def write_weights(net: nn.Module, ts: Tensor):
 def write_states(net: nn.Module, ts: Tensor):
     for offset, data, size, is_buffer in iterate_params_buffers(net):
         if len(data.shape) == 0:
-            data.fill_(ts[offset:offset + size][0])
+            continue
+            # data.fill_(ts[offset:offset + size][0])
         else:
             data[:] = ts[offset:offset + size].reshape(data.shape)
 
