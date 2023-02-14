@@ -16,16 +16,28 @@ from net_plotter import get_weights
 from wrappers import cat
 from torch import Tensor
 from scan_traj import cat_tensor, get_states, write_states
+import torch.multiprocessing as mp
+
 
 model_dir = 'trained/'
 # pool = None
 
-from fastapi import FastAPI, Query, Request
+from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
 
-def t7_to_tensor(arch, fp) -> Tensor:
+def train_consumer(q1: mp.Queue):
+    from scan_traj import scan
+    while 1:
+        task = q1.get()
+        if task is None:
+            return
+        scan(*task)
+
+def t7_to_tensor(arch, fp, return_t7=False) -> Tensor:
     net = load(arch)
     t7 = torch.load(fp)
-    net.load_state_dict(t7['state_dict'])
+    net.load_state_dict(t7.pop('state_dict'))
+    if return_t7:
+        return cat_tensor(get_states(net)), t7
     return cat_tensor(get_states(net))
 
 def u_resolver(src: list[str], proj: str, pf='model_', sf='.t7') -> list[str]:
@@ -41,6 +53,7 @@ def u_resolver(src: list[str], proj: str, pf='model_', sf='.t7') -> list[str]:
 
 def preload() -> FastAPI:
     """多worker fork出来前先进行一些通用东西的初始化"""
+    
     if not os.path.exists('log'):
         os.mkdir('log')
     app = FastAPI()
@@ -56,6 +69,8 @@ def preload() -> FastAPI:
         response = await call_next(request)
         response.headers["Access-Control-Allow-Origin"] = request.headers.get('origin', '*')
         return response
+
+
 
     # app.include_router(v1_router)
     return app
@@ -154,6 +169,7 @@ async def _(s: ArgsPCA):
     pca = PCA(2)
 
     nplist = []
+    meta = []
     # def enum_path():
     for j in os.listdir(proj):
         for i in s.selection:
@@ -162,8 +178,10 @@ async def _(s: ArgsPCA):
             for p, i in enumerate(path):
                 f, b = i.split('.')
                 path[p] = f'model_{f}B{b}'
-            ts = t7_to_tensor(s.arch, cat(proj, j, *path, m)).numpy() # 输出： param + buf
+            ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *path, m), True)
+            ts = ts.numpy() # 输出： param + buf
             nplist.append(ts)
+            meta.append(t7)
 
     # for ts in enum_path():
         # nplist.append(ts)
@@ -191,7 +209,8 @@ async def _(s: ArgsPCA):
     return {
         'axis': axis.tolist(),
         'mean': avg.tolist(),
-        'coord': newlist
+        'coord': newlist,
+        'meta': meta
     }
 
 @app.get('/info')
@@ -214,12 +233,11 @@ class ArgsTrain(BaseModel):
     proj: str
 
 @app.post('/train')
-async def _(a: ArgsTrain):
+async def _(a: ArgsTrain, b: BackgroundTasks, r: Response):
     path = u_resolver([a.u], model_dir + a.proj)[0]
     dire = path.rsplit('/', 1)[0]
     from_epoch = int(a.u.rsplit('/')[-1])
-    from scan_traj import scan
-    scan(
+    t_queue.put((
         a.arch,
         from_epoch,
         a.e,
@@ -229,8 +247,9 @@ async def _(a: ArgsTrain):
         a.bs,
         a.op,
         a.seed,
-        dire
-    )
+        dire))
+    r.status_code = 202
+    return r
         
 class ArgsHeatmap(BaseModel):
     xstep: int
@@ -245,7 +264,6 @@ class ArgsHeatmap(BaseModel):
 @app.post('/heatmap')
 async def _(a: ArgsHeatmap):
     from net_plotter import set_weights
-    import torch.multiprocessing as mp
     import evaluation
     import copy
 
@@ -299,5 +317,13 @@ async def _(a: ArgsHeatmap):
 
 
 if __name__ == "__main__":
-    # pool = ProcessPoolExecutor(4)
+    global t_manager, t_queue, t_consumers
+    t_manager = mp.Manager()
+    t_queue = t_manager.Queue()
+    t_consumers = [
+        mp.Process(target=train_consumer,
+            args=(t_queue,)
+        ) for _ in range(4)
+    ]
+    for x in t_consumers: x.start()
     uvicorn.run(app, port=40000)

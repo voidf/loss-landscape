@@ -69,7 +69,7 @@ def epoch_consumer(network_type: str, tasks: mp.Queue, results: mp.Queue, cuda_d
         
         net.load_state_dict(task[1], strict=True)
         l2, a2 = eval_loss(net, criterion, testloader)
-        print(l2, math.isnan(l2), float('nan'))
+        # print(l2, math.isnan(l2), float('nan'))
         if math.isnan(l2):
             results.put((task[0], float('nan'), float('nan'), float('nan'), float('nan')))
             continue
