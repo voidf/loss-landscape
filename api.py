@@ -1,7 +1,8 @@
 from cmath import isnan
 from http.client import HTTPException
 import math
-from typing import List
+import traceback
+from typing import List, Optional
 import fastapi
 import os
 from pydantic import BaseModel
@@ -30,7 +31,10 @@ def train_consumer(q1: mp.Queue):
         task = q1.get()
         if task is None:
             return
-        scan(*task)
+        try:
+            scan(*task)
+        except:
+            traceback.print_exc()
 
 def t7_to_tensor(arch, fp, return_t7=False) -> Tensor:
     net = load(arch)
@@ -159,6 +163,15 @@ class ArgsPCA(BaseModel):
     selection: List[str]
     proj: str
 
+def translate_u_path(u: str) -> List[str]:
+    path = u.split('/')
+    m = f'model_{path.pop()}.t7'
+    for p, i in enumerate(path):
+        f, b = i.split('.')
+        path[p] = f'model_{f}B{b}'
+    path.append(m)
+    return path
+
 @app.post('/pca')
 async def _(s: ArgsPCA):
     logger.info(s)
@@ -173,12 +186,7 @@ async def _(s: ArgsPCA):
     # def enum_path():
     for j in os.listdir(proj):
         for i in s.selection:
-            path = i.split('/')
-            m = f'model_{path.pop()}.t7'
-            for p, i in enumerate(path):
-                f, b = i.split('.')
-                path[p] = f'model_{f}B{b}'
-            ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *path, m), True)
+            ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             ts = ts.numpy() # 输出： param + buf
             nplist.append(ts)
             meta.append(t7)
@@ -257,9 +265,11 @@ class ArgsHeatmap(BaseModel):
     xstep_rate: float
     ystep_rate: float
     arch: str
-    mean: List[float]
+    mean: Optional[List[float]] = None
     xdir: List[float]
     ydir: List[float]
+    u: Optional[str] = None
+    proj: Optional[str] = None
 
 @app.post('/heatmap')
 async def _(a: ArgsHeatmap):
@@ -279,7 +289,12 @@ async def _(a: ArgsHeatmap):
     for x in consumers: x.start()
 
     net = load(a.arch)
-    a.mean = torch.tensor(a.mean)
+    if a.u:
+        proj = model_dir + a.proj
+        for j in os.listdir(proj):
+            a.mean = t7_to_tensor(a.arch, cat(proj, j, *translate_u_path(a.u)))
+    else:
+        a.mean = torch.tensor(a.mean)
     a.xdir = torch.tensor(a.xdir)
     a.ydir = torch.tensor(a.ydir)
 
