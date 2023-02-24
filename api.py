@@ -18,9 +18,12 @@ from wrappers import cat
 from torch import Tensor
 from scan_traj import cat_tensor, get_states, write_states
 import torch.multiprocessing as mp
-
+from fastapi_cache.decorator import cache
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.inmemory import InMemoryBackend
 
 model_dir = 'trained/'
+worker_cnt = 6
 # pool = None
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
@@ -81,7 +84,12 @@ def preload() -> FastAPI:
 
 app = preload()
 
+@app.on_event("startup")
+async def _():
+    FastAPICache.init(InMemoryBackend())
+
 @app.get('/models')
+@cache()
 async def _():
     l = []
     for i in os.listdir(model_dir):
@@ -89,6 +97,7 @@ async def _():
     return l
 
 @app.get('/list')
+@cache()
 async def _(proj: str):
     proj = model_dir + proj
     d = {}
@@ -173,6 +182,7 @@ def translate_u_path(u: str) -> List[str]:
     return path
 
 @app.post('/pca')
+@cache()
 async def _(s: ArgsPCA):
     logger.info(s)
     if len(s.selection) == 0:
@@ -186,6 +196,8 @@ async def _(s: ArgsPCA):
     # def enum_path():
     for j in os.listdir(proj):
         for i in s.selection:
+            # if i == '90.1/111':
+                # print('nb')
             ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             ts = ts.numpy() # 输出： param + buf
             nplist.append(ts)
@@ -222,6 +234,7 @@ async def _(s: ArgsPCA):
     }
 
 @app.get('/info')
+@cache()
 async def _(p: str, proj: str):
     path = u_resolver([p], model_dir + proj)[0]
     t7 = torch.load(path)
@@ -272,19 +285,19 @@ class ArgsHeatmap(BaseModel):
     proj: Optional[str] = None
 
 @app.post('/heatmap')
+@cache()
 async def _(a: ArgsHeatmap):
     from net_plotter import set_weights
     import evaluation
     import copy
 
     mng = mp.Manager()
-    wk = 4
-    q1 = mng.Queue(maxsize=wk+1)
+    q1 = mng.Queue(maxsize=worker_cnt+1)
     q2 = mng.Queue()
     consumers = [
         mp.Process(target=evaluation.epoch_consumer,
             args=(a.arch, q1, q2)
-        ) for _ in range(wk)
+        ) for _ in range(worker_cnt)
     ]
     for x in consumers: x.start()
 
@@ -338,7 +351,7 @@ if __name__ == "__main__":
     t_consumers = [
         mp.Process(target=train_consumer,
             args=(t_queue,)
-        ) for _ in range(4)
+        ) for _ in range(worker_cnt)
     ]
     for x in t_consumers: x.start()
     uvicorn.run(app, port=40000)
