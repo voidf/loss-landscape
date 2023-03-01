@@ -1,8 +1,12 @@
 from cmath import isnan
-from http.client import HTTPException
+import functools
+from fastapi import HTTPException
+import json
 import math
+import operator
 import traceback
 from typing import List, Optional
+from cv2 import reduce
 import fastapi
 import os
 from pydantic import BaseModel
@@ -16,14 +20,16 @@ from cifar10.model_loader import load
 from net_plotter import get_weights
 from wrappers import cat
 from torch import Tensor
-from scan_traj import cat_tensor, get_states, write_states
+import torch.optim
+from scan_traj import cat_tensor, get_states, write_buf_no_nbt, write_states, write_weights
 import torch.multiprocessing as mp
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
+from safetensors import safe_open
 
 model_dir = 'trained/'
-worker_cnt = 6
+worker_cnt = 5
 # pool = None
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
@@ -39,15 +45,24 @@ def train_consumer(q1: mp.Queue):
         except:
             traceback.print_exc()
 
-def t7_to_tensor(arch, fp, return_t7=False) -> Tensor:
+def t7_to_tensor(arch, fp, return_t7=False, tensor_key='state_dict', skip_num_batches_tracked=True) -> Tensor:
     net = load(arch)
     t7 = torch.load(fp)
-    net.load_state_dict(t7.pop('state_dict'))
+    net.load_state_dict(t7.pop(tensor_key))
+    ten = cat_tensor(get_states(net, skip_num_batches_tracked))
     if return_t7:
-        return cat_tensor(get_states(net)), t7
-    return cat_tensor(get_states(net))
+        return ten, t7
+    return ten
 
-def u_resolver(src: list[str], proj: str, pf='model_', sf='.t7') -> list[str]:
+# def optim_to_tensor(arch, fp, opt='sgd', optim_key='optimizer') -> Tensor:
+#     net = load(arch)
+#     if opt == 'sgd':
+#         o = torch.optim.SGD(net.parameters(), 0.1)
+#     o.load_state_dict(torch.load(fp))
+#     return cat_tensor(get_states(o))
+
+
+def u_resolver(src: list[str], proj: str, pf='model_', sf='.safetensors') -> list[str]:
     for j in os.listdir(proj):
         for p, i in enumerate(src):
             path = i.split('/')
@@ -105,7 +120,7 @@ async def _(proj: str):
     for i in os.listdir(proj): # 跳过超参记录夹
         for dp, dn, fn in os.walk(cat(proj, i)):
             sp = dp.removeprefix(cat(proj, i)).split(os.sep)
-            t7s = [i for i in fn if i.endswith('.t7') and i.startswith('model_')]
+            t7s = [i for i in fn if i.endswith('.safetensors') and i.startswith('model_')]
             key = cat(*sp[1:])
             if root:
                 root = False
@@ -133,7 +148,7 @@ async def _(proj: str):
             l.append({
                 'kp': kp,
                 'p3': pk3,
-                'x': int(w.removeprefix('model_').removesuffix('.t7'))
+                'x': int(w.removeprefix('model_').removesuffix('.safetensors'))
             })
     import functools
     def lcmp(x, y):
@@ -171,10 +186,11 @@ class ArgsPCA(BaseModel):
     arch: str
     selection: List[str]
     proj: str
+    weight: bool = True
 
 def translate_u_path(u: str) -> List[str]:
     path = u.split('/')
-    m = f'model_{path.pop()}.t7'
+    m = f'model_{path.pop()}.safetensors'
     for p, i in enumerate(path):
         f, b = i.split('.')
         path[p] = f'model_{f}B{b}'
@@ -193,20 +209,42 @@ async def _(s: ArgsPCA):
 
     nplist = []
     meta = []
-    # def enum_path():
+    from safetensors import safe_open
+
+    avg = None
+    
+        
+    net = load(s.arch)
+    # weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
+
     for j in os.listdir(proj):
         for i in s.selection:
-            # if i == '90.1/111':
-                # print('nb')
-            ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
-            ts = ts.numpy() # 输出： param + buf
-            nplist.append(ts)
+            with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
+                param: np.ndarray = fil.get_tensor('param')
+                buf: np.ndarray = fil.get_tensor('buf')
+                # nbt: np.ndarray = fil.get_tensor('nbt')
+            cated = np.concatenate((param, buf))
+            if avg is None:
+                avg = cated.copy()
+            else:
+                avg += cated
+            with open(fp.removesuffix('safetensors') + 'json') as fil:
+                t7 = json.load(fil)
+            # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
+            # ts = ts.numpy() # 输出： param + buf
+            if s.weight:
+                nplist.append(param)
+            else:
+                nplist.append(cated)
+            # nplist.append(ts[:weight_len])
             meta.append(t7)
+
 
     # for ts in enum_path():
         # nplist.append(ts)
+    # avg = nplist.mean(axis=0)
+    avg /= len(nplist)
     nplist = np.array(nplist)
-    avg = nplist.mean(axis=0)
 
     # pca.fit(nplist)
     logger.debug('nplist len: {}', len(nplist))
@@ -237,9 +275,11 @@ async def _(s: ArgsPCA):
 @cache()
 async def _(p: str, proj: str):
     path = u_resolver([p], model_dir + proj)[0]
-    t7 = torch.load(path)
-    t7.pop('state_dict')
-    return t7
+    with open(path.removesuffix('safetensors')+'json', 'r') as f:
+        return json.load(f)
+    # t7 = torch.load(path)
+    # t7.pop('state_dict')
+    # return t7
 
 class ArgsTrain(BaseModel):
     u: str
@@ -287,12 +327,11 @@ class ArgsHeatmap(BaseModel):
 @app.post('/heatmap')
 @cache()
 async def _(a: ArgsHeatmap):
-    from net_plotter import set_weights
     import evaluation
     import copy
 
     mng = mp.Manager()
-    q1 = mng.Queue(maxsize=worker_cnt+1)
+    q1 = mng.Queue(maxsize=worker_cnt)
     q2 = mng.Queue()
     consumers = [
         mp.Process(target=evaluation.epoch_consumer,
@@ -304,21 +343,47 @@ async def _(a: ArgsHeatmap):
     net = load(a.arch)
     if a.u:
         proj = model_dir + a.proj
+    
         for j in os.listdir(proj):
-            a.mean = t7_to_tensor(a.arch, cat(proj, j, *translate_u_path(a.u)))
+            with safe_open(cat(proj, j, *translate_u_path(a.u)), framework="pt", device='cpu') as fil:
+                # param = fil.get_tensor('param')
+                # buf = fil.get_tensor('buf')
+                write_weights(net, param := fil.get_tensor('param'))
+                write_buf_no_nbt(net, buf := fil.get_tensor('buf'))
+            
+            a.mean = torch.cat((param, buf))
+            # a.mean = t7_to_tensor(a.arch, cat(proj, j, *translate_u_path(a.u)))
     else:
         a.mean = torch.tensor(a.mean)
+        write_states(net, a.mean)
+
+    if len(a.mean) > len(a.xdir):
+        weight_mode = True
+        a.mean = a.mean[:len(a.xdir)]
+    elif len(a.mean) == len(a.xdir):
+        weight_mode = False
+    else:
+        raise HTTPException(500, f'mean shape:{len(a.mean)} != {len(a.xdir)}')
+    #     # weight mode
+    #     ts: Tensor = torch.zeros(len(a.mean))
+    #     ts[:len(a.xdir)] = a.xdir[:]
+    #     a.xdir = ts
+    #     ts[:len(a.ydir)] = a.ydir[:]
+    #     a.ydir = ts
+    # else:
     a.xdir = torch.tensor(a.xdir)
     a.ydir = torch.tensor(a.ydir)
 
-    write_states(net, a.mean)
     
     # needle = copy.deepcopy(net)
     with torch.no_grad():
         for x in range(-a.xstep, a.xstep + 1):
             for y in range(-a.ystep, a.ystep + 1):
                 cur = a.mean + x * a.xstep_rate * a.xdir + y * a.ystep_rate * a.ydir
-                write_states(net, cur)
+                if weight_mode:
+                    write_weights(net, cur)
+                else:
+                    write_states(net, cur)
                 q1.put(((x, y), copy.deepcopy(net.state_dict())))
             # set_weights(needle, get_weights)
 

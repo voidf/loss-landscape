@@ -7,6 +7,16 @@ from torchsummary import summary
 from cifar10.model_loader import load
 
 
-summary(load('vgg9'), (3, 32, 32))
-summary(load('resnet56'), (3, 32, 32))
-summary(load('resnet56_noshort'), (3, 32, 32))
+# summary(load('vgg9'), (3, 32, 32))
+# summary(load('resnet56'), (3, 32, 32))
+# summary(load('resnet56_noshort'), (3, 32, 32))
+
+import functools
+from functools import reduce
+import operator
+
+net = load('resnet56')
+
+weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
+print(weight_len)
+

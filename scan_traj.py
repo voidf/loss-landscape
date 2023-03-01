@@ -3,6 +3,7 @@ from datetime import datetime
 from functools import partial
 from itertools import chain
 import json
+from math import prod
 import random
 import shutil
 import traceback
@@ -106,10 +107,22 @@ def scan(
 
     fn = f'model_{from_epoch}'
     
-    t7 = torch.load(projdir(fn + '.t7'))
-    net.load_state_dict(t7['state_dict'])
+    # t7 = torch.load(projdir(fn + '.t7'))
+    
+    with open(projdir(fn + '.json'), 'r') as fil:
+        t7 = json.load(fil)
 
     net.cuda()
+    from safetensors import safe_open
+
+    os.environ["SAFETENSORS_FAST_GPU"] = "1"
+    with safe_open(projdir(fn + '.safetensors'), framework="pt", device="cuda:0") as fil:
+        write_weights(net, fil.get_tensor('param'))
+        write_buf_no_nbt(net, fil.get_tensor('buf'))
+        write_nbt(net, fil.get_tensor('nbt'))
+        
+    # net.load_state_dict(t7['state_dict'])
+
     criterion = criterion.cuda()
 
     if opt == 'sgd':
@@ -127,7 +140,7 @@ def scan(
         param_group['lr'] = lr
 
 
-    if not os.path.exists(projdir(f'model_{from_epoch + 1}.t7')):
+    if not os.path.exists(projdir(f'model_{from_epoch + 1}.safetensors')):
         branch_dir = '.'
     else:
         idx = 1
@@ -149,6 +162,8 @@ def scan(
 
 
     from main import train, test
+    from safetensors.torch import save_file
+
 
     for e in range(from_epoch + 1, to_epoch + 1):
         loss, train_err = train(trainloader, net, criterion, optimizer, True)
@@ -171,12 +186,19 @@ def scan(
             'lr': lr,
             'momentum': mom,
             'weight_decay': wd,
-            'state_dict': net.state_dict(),
+            # 'state_dict': net.state_dict(),
         }
+        save_file({
+            'param': cat_tensor(get_weights(net)),
+            'buf': cat_tensor(get_buf_no_nbt(net)),
+            'nbt': cat_tensor(get_nbt(net))
+            }, projdir(branch_dir, f'model_{e}.safetensors'))
+        with open(projdir(branch_dir, f'model_{e}.json'), 'w') as fil:
+            json.dump(state, fil)
         opt_state = {
             'optimizer': optimizer.state_dict()
         }
-        torch.save(state, projdir(branch_dir, f'model_{e}.t7'))
+        # torch.save(state, projdir(branch_dir, f'model_{e}.t7'))
         torch.save(opt_state, projdir(branch_dir, f'opt_state_{e}.t7'))
         # if e == from_epoch + 10:
         #     for param_group in optimizer.param_groups:
@@ -195,7 +217,7 @@ def scan(
     # assert (accli.keys() & acclibak.keys()) == acclibak.keys()
     # torch.save(accli, projdir(f'amount={amount}', fn))
 
-def iterate_params_buffers(net: nn.Module):
+def iterate_params_buffers(net: nn.Module, skip_num_batches_tracked=True):
     offset = 0
     for param in net.parameters():
         size = reduce(operator.mul, param.data.shape)
@@ -204,8 +226,11 @@ def iterate_params_buffers(net: nn.Module):
         offset += size
     for buffer in net.buffers():
         if len(buffer.shape) == 0:
-            continue # 跳过num_batches_tracked
-        size = reduce(operator.mul, buffer.shape)
+            if skip_num_batches_tracked:
+                continue # 跳过num_batches_tracked
+            # else:
+
+        size = prod(buffer.shape)
         yield offset, buffer, size, True
         offset += size
 
@@ -217,36 +242,60 @@ def iterate_params(net: nn.Module):
         yield offset, data.data, size, False
         offset += size
 
-def get_states(net: nn.Module): 
+def get_states(net: nn.Module, skip_num_batches_tracked=True): 
     # for n, p in chain(net.named_parameters(), net.named_buffers()):
         # if len(p.shape) == 0:
             # print(n, p.shape)
-    return [p.data for n, p in chain(net.named_parameters(), net.named_buffers()) if not n.endswith('num_batches_tracked')]
+    return [p.data for n, p in chain(net.named_parameters(), net.named_buffers()) if (not n.endswith('num_batches_tracked') or not skip_num_batches_tracked)]
+
+def get_buf_no_nbt(net: nn.Module):
+    return [p.data for n, p in net.named_buffers() if not n.endswith('num_batches_tracked')]
+
+def write_buf_no_nbt(net: nn.Module, ts: Tensor):
+    sz = 0
+    for k, v in net.named_buffers():
+        if not k.endswith('num_batches_tracked'):
+            l = prod(v.shape)
+            v.data = ts[sz:sz+l].reshape(v.shape)
+            sz += l
+
+def get_nbt(net: nn.Module):
+    return [p.data for n, p in net.named_buffers() if n.endswith('num_batches_tracked')]
+
+def write_nbt(net: nn.Module, ts: Tensor):
+    ctr = 0
+    for k, v in net.named_buffers():
+        if k.endswith('num_batches_tracked'):
+            v.fill_(ts[ctr])
+            ctr += 1
 
 def cat_tensor(li: List[Tensor]) -> Tensor:
+    # return torch.cat(li)
     sz = 0
     for p in li:
-        sz += reduce(operator.mul, p.data.shape)
+        sz += prod(p.data.shape)
     buf = torch.empty(sz, dtype=torch.float32)
     o = 0
     for p in li:
-        sz = reduce(operator.mul, p.data.shape)
+        sz = prod(p.data.shape)
         buf[o:o+sz] = p.data.view(-1)
         o += sz
     return buf
 
 def write_weights(net: nn.Module, ts: Tensor):
     for offset, data, size, is_buffer in iterate_params(net):
-        if len(data.shape) == 0:
-            data.fill_(ts[offset:offset + size][0])
-        else:
-            data[:] = ts[offset:offset + size].reshape(data.shape)
+        # if len(data.shape) == 0:
+        #     data.fill_(ts[offset:offset + size][0])
+        # else:
+        data[:] = ts[offset:offset + size].reshape(data.shape)
 
-def write_states(net: nn.Module, ts: Tensor):
-    for offset, data, size, is_buffer in iterate_params_buffers(net):
+def write_states(net: nn.Module, ts: Tensor, skip_num_batch_tracked=True):
+    for offset, data, size, is_buffer in iterate_params_buffers(net, skip_num_batch_tracked):
         if len(data.shape) == 0:
-            continue
-            # data.fill_(ts[offset:offset + size][0])
+            if skip_num_batch_tracked:
+                continue
+            else:
+                data.fill_(ts[offset:offset + size][0])
         else:
             data[:] = ts[offset:offset + size].reshape(data.shape)
 
