@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from concurrent.futures import ProcessPoolExecutor
 from cifar10.model_loader import load
 from net_plotter import get_weights
+from pref import find_arch
 from wrappers import cat
 from torch import Tensor
 import torch.optim
@@ -54,14 +55,6 @@ def t7_to_tensor(arch, fp, return_t7=False, tensor_key='state_dict', skip_num_ba
         return ten, t7
     return ten
 
-# def optim_to_tensor(arch, fp, opt='sgd', optim_key='optimizer') -> Tensor:
-#     net = load(arch)
-#     if opt == 'sgd':
-#         o = torch.optim.SGD(net.parameters(), 0.1)
-#     o.load_state_dict(torch.load(fp))
-#     return cat_tensor(get_states(o))
-
-
 def u_resolver(src: list[str], proj: str, pf='model_', sf='.safetensors') -> list[str]:
     for j in os.listdir(proj):
         for p, i in enumerate(src):
@@ -86,7 +79,7 @@ def preload() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    @app.middleware('http') # TODO: [insecure] set to a fixed origin
+    @app.middleware('http') # TODO: [insecure] set to argu fixed origin
     async def cors_everywhere(request: Request, call_next):
         response = await call_next(request)
         response.headers["Access-Control-Allow-Origin"] = request.headers.get('origin', '*')
@@ -183,7 +176,6 @@ async def _(proj: str):
     return {'label': ddl, 'points': l}
 
 class ArgsPCA(BaseModel):
-    arch: str
     selection: List[str]
     proj: str
     weight: bool = True
@@ -198,27 +190,23 @@ def translate_u_path(u: str) -> List[str]:
     return path
 
 @app.post('/pca')
-@cache()
-async def _(s: ArgsPCA):
-    logger.info(s)
-    if len(s.selection) == 0:
+# @cache(expire=60)
+async def _(argu: ArgsPCA):
+    logger.info(argu)
+    if len(argu.selection) == 0:
         raise HTTPException(400, 'empty selection')
     import numpy as np
-    proj = model_dir + s.proj
+    proj = model_dir + argu.proj
     pca = PCA(2)
 
     nplist = []
-    meta = []
-    from safetensors import safe_open
-
     avg = None
-    
         
-    net = load(s.arch)
+    net = load(find_arch(argu.proj))
     # weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
 
     for j in os.listdir(proj):
-        for i in s.selection:
+        for i in argu.selection:
             with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
                 param: np.ndarray = fil.get_tensor('param')
                 buf: np.ndarray = fil.get_tensor('buf')
@@ -232,12 +220,11 @@ async def _(s: ArgsPCA):
                 t7 = json.load(fil)
             # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             # ts = ts.numpy() # 输出： param + buf
-            if s.weight:
+            if argu.weight:
                 nplist.append(param)
             else:
                 nplist.append(cated)
             # nplist.append(ts[:weight_len])
-            meta.append(t7)
 
 
     # for ts in enum_path():
@@ -261,15 +248,34 @@ async def _(s: ArgsPCA):
         newlist[p] = {
             'x': i[0],
             'y': i[1],
-            'u': s.selection[p],
-            'l': cat(*s.selection[p].split('/')[:-1]),
+            'u': argu.selection[p],
+            'l': cat(*argu.selection[p].split('/')[:-1]),
         }
     return {
         'axis': axis.tolist(),
         'mean': avg.tolist(),
         'coord': newlist,
-        'meta': meta
     }
+
+class ArgsMeta(BaseModel):
+    selection: List[str]
+    proj: str
+
+@app.post('/meta')
+# @cache()
+async def _(argu: ArgsMeta):
+    logger.info(argu)
+    if len(argu.selection) == 0:
+        raise HTTPException(400, 'empty selection')
+    proj = model_dir + argu.proj
+    meta = []
+    for j in os.listdir(proj):
+        for i in argu.selection:
+            with open(cat(proj, j, *translate_u_path(i)).removesuffix('safetensors') + 'json') as fil:
+                t7 = json.load(fil)
+            meta.append(t7)
+    return meta
+
 
 @app.get('/info')
 @cache()
@@ -290,24 +296,23 @@ class ArgsTrain(BaseModel):
     seed: int
     op: str
     e: int
-    arch: str
     proj: str
 
 @app.post('/train')
-async def _(a: ArgsTrain, b: BackgroundTasks, r: Response):
-    path = u_resolver([a.u], model_dir + a.proj)[0]
+async def _(argu: ArgsTrain, b: BackgroundTasks, r: Response):
+    path = u_resolver([argu.u], model_dir + argu.proj)[0]
     dire = path.rsplit('/', 1)[0]
-    from_epoch = int(a.u.rsplit('/')[-1])
+    from_epoch = int(argu.u.rsplit('/')[-1])
     t_queue.put((
-        a.arch,
+        find_arch(argu.proj),
         from_epoch,
-        a.e,
-        a.lr,
-        a.mom,
-        a.wd,
-        a.bs,
-        a.op,
-        a.seed,
+        argu.e,
+        argu.lr,
+        argu.mom,
+        argu.wd,
+        argu.bs,
+        argu.op,
+        argu.seed,
         dire))
     r.status_code = 202
     return r
@@ -317,16 +322,15 @@ class ArgsHeatmap(BaseModel):
     ystep: int
     xstep_rate: float
     ystep_rate: float
-    arch: str
     mean: Optional[List[float]] = None
     xdir: List[float]
     ydir: List[float]
     u: Optional[str] = None
-    proj: Optional[str] = None
+    proj: str
 
 @app.post('/heatmap')
-@cache()
-async def _(a: ArgsHeatmap):
+# @cache()
+async def _(argu: ArgsHeatmap):
     import evaluation
     import copy
 
@@ -335,51 +339,51 @@ async def _(a: ArgsHeatmap):
     q2 = mng.Queue()
     consumers = [
         mp.Process(target=evaluation.epoch_consumer,
-            args=(a.arch, q1, q2)
+            args=(find_arch(argu.proj), q1, q2)
         ) for _ in range(worker_cnt)
     ]
     for x in consumers: x.start()
 
-    net = load(a.arch)
-    if a.u:
-        proj = model_dir + a.proj
+    net = load(find_arch(argu.proj))
+    if argu.u:
+        proj = model_dir + argu.proj
     
         for j in os.listdir(proj):
-            with safe_open(cat(proj, j, *translate_u_path(a.u)), framework="pt", device='cpu') as fil:
+            with safe_open(cat(proj, j, *translate_u_path(argu.u)), framework="pt", device='cpu') as fil:
                 # param = fil.get_tensor('param')
                 # buf = fil.get_tensor('buf')
                 write_weights(net, param := fil.get_tensor('param'))
                 write_buf_no_nbt(net, buf := fil.get_tensor('buf'))
             
-            a.mean = torch.cat((param, buf))
-            # a.mean = t7_to_tensor(a.arch, cat(proj, j, *translate_u_path(a.u)))
+            argu.mean = torch.cat((param, buf))
+            # argu.mean = t7_to_tensor(argu.arch, cat(proj, j, *translate_u_path(argu.u)))
     else:
-        a.mean = torch.tensor(a.mean)
-        write_states(net, a.mean)
+        argu.mean = torch.tensor(argu.mean)
+        write_states(net, argu.mean)
 
-    if len(a.mean) > len(a.xdir):
+    if len(argu.mean) > len(argu.xdir):
         weight_mode = True
-        a.mean = a.mean[:len(a.xdir)]
-    elif len(a.mean) == len(a.xdir):
+        argu.mean = argu.mean[:len(argu.xdir)]
+    elif len(argu.mean) == len(argu.xdir):
         weight_mode = False
     else:
-        raise HTTPException(500, f'mean shape:{len(a.mean)} != {len(a.xdir)}')
+        raise HTTPException(500, f'mean shape:{len(argu.mean)} != {len(argu.xdir)}')
     #     # weight mode
-    #     ts: Tensor = torch.zeros(len(a.mean))
-    #     ts[:len(a.xdir)] = a.xdir[:]
-    #     a.xdir = ts
-    #     ts[:len(a.ydir)] = a.ydir[:]
-    #     a.ydir = ts
+    #     ts: Tensor = torch.zeros(len(argu.mean))
+    #     ts[:len(argu.xdir)] = argu.xdir[:]
+    #     argu.xdir = ts
+    #     ts[:len(argu.ydir)] = argu.ydir[:]
+    #     argu.ydir = ts
     # else:
-    a.xdir = torch.tensor(a.xdir)
-    a.ydir = torch.tensor(a.ydir)
+    argu.xdir = torch.tensor(argu.xdir)
+    argu.ydir = torch.tensor(argu.ydir)
 
     
     # needle = copy.deepcopy(net)
     with torch.no_grad():
-        for x in range(-a.xstep, a.xstep + 1):
-            for y in range(-a.ystep, a.ystep + 1):
-                cur = a.mean + x * a.xstep_rate * a.xdir + y * a.ystep_rate * a.ydir
+        for x in range(-argu.xstep, argu.xstep + 1):
+            for y in range(-argu.ystep, argu.ystep + 1):
+                cur = argu.mean + x * argu.xstep_rate * argu.xdir + y * argu.ystep_rate * argu.ydir
                 if weight_mode:
                     write_weights(net, cur)
                 else:
@@ -392,13 +396,13 @@ async def _(a: ArgsHeatmap):
     for x in consumers: x.join()
 
     ret = []
-    for _ in range((2 * a.xstep + 1) * (2 * a.ystep + 1)):
+    for _ in range((2 * argu.xstep + 1) * (2 * argu.ystep + 1)):
         (x, y), train_loss, train_acc, test_loss, test_acc = q2.get()
         if math.isnan(train_loss) or math.isnan(test_loss):
             continue
         ret.append({
-            'x': x * a.xstep_rate,
-            'y': y * a.ystep_rate,
+            'x': x * argu.xstep_rate,
+            'y': y * argu.ystep_rate,
             'trl': train_loss,
             'tra': train_acc,
             'tel': test_loss,
@@ -406,7 +410,6 @@ async def _(a: ArgsHeatmap):
         })
     logger.debug(ret)
     return ret
-    # net = load(a.arch)
 
 
 if __name__ == "__main__":

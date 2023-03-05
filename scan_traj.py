@@ -173,15 +173,15 @@ def scan(
         pin(status)
 
         # Save checkpoint.
-        acc = 100 - test_err
+        acc = 100. - test_err
         state = {
-            'acc': acc,
+            'tea': acc,
+            'tel': test_loss,
+            'tra': 100. - train_err,
+            'trl': loss,
             'batch_size': bs,
             'random_seed': seed,
             'epoch': e,
-            'train_loss': loss,
-            'train_err': train_err,
-            'test_loss': test_loss,
             'optimizer': opt,
             'lr': lr,
             'momentum': mom,

@@ -21,13 +21,14 @@ from math import prod
 if __name__ == '__main__':
 
     for d in os.listdir('trained'):
-        if d.startswith('tn'):
+        if d.startswith('R56'):
             ar = find_arch(d)
             net = load(ar)
             for di in os.listdir(d1 := cat('trained', d)):
                 for dirpath, _, fn in os.walk(d2 := cat(d1, di)):
                     for t7 in fn:
-                        if t7.endswith('.t7') and t7.startswith('model_'):
+                        # if t7.endswith('.t7') and t7.startswith('model_'):
+                        if t7.endswith('.safetensors') and t7.startswith('model_'):
 
                             # if os.path.exists(t7path + '.net1'):
                             #     os.remove(t7path + '.net1')
@@ -37,6 +38,7 @@ if __name__ == '__main__':
                             #     print('del', t7path + '.net2')
 
                             t7path = cat(dirpath, t7)
+                            print(t7path)
                             def remove_ckpt():
                                 os.remove(t7path)
                                 print('remove', t7path)
@@ -66,8 +68,28 @@ if __name__ == '__main__':
                                 
                                 save_file(tensors, filen)
                                 print(t7path, '=>', filen)
-                            convert_ckpt()
-                            remove_ckpt()
+                            def json_desc_update():
+                                with open(jfile := t7path.removesuffix('safetensors') + 'json', 'r+') as f:
+                                    js = json.load(f)
+                                    print(js, '=>', end=' ')
+                                    if 'train_loss' in js:
+                                        js['trl'] = js.pop('train_loss')
+                                        js['tra'] = 100. - js.pop('train_err')
+                                        js['tel'] = js.pop('test_loss')
+                                    if 'acc' in js:
+                                        js['tea'] = js.pop('acc')
+                                    f.seek(0)
+                                    json.dump(js, f)
+                                    print(js)
+                                    f.truncate()
+                                # with open(jfile, 'w') as f:
+                                    # js = json.load(f)
+
+
+
+                            # convert_ckpt()
+                            # remove_ckpt()
+                            json_desc_update()
 
                             # def convert_opt():
                             #     oppath = cat(dirpath, 'opt_state'+t7.removeprefix('model'))
