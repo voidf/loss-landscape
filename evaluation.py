@@ -18,6 +18,10 @@ from multiprocessing import Queue
 from cifar10.model_loader import load
 
 from dataloader import load_dataset
+
+torch.backends.cuda.matmul.allow_tf32 = True
+
+
 def err_print_exc(e):
     with open('exc.txt', 'a') as f:
         f.write(str(e)+'\n')
@@ -59,7 +63,12 @@ def epoch_consumer(network_type: str, tasks: mp.Queue, results: mp.Queue, cuda_d
     """消费者侧并发，建议使用"""
     net = load(network_type)
     net.cuda(cuda_device)
+    # net = torch.compile(net)
     trainloader, testloader = load_dataset(threads=1, **datasetkws)
+    # 没有提升
+    # from accelerate import Accelerator
+    # ac = Accelerator(fp16=True)
+    # net, trainloader, testloader = ac.prepare(net, trainloader, testloader)
     criterion = nn.CrossEntropyLoss()
     while 1:
         task: Tuple[int, Mapping[str, Any]] = tasks.get()

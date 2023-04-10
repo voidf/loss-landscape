@@ -26,7 +26,7 @@ def load_ckp(b, ckp, pf):
     # print('use cache:', f'plot_cache/{pf}-{ckp}-{b}.ckp')
     # return torch.load(f'plot_cache/{pf}-{ckp}-{b}.ckp')
 
-class VGG(nn.Module):
+class VGG(torch.jit.ScriptModule):
     def __init__(self, vgg_name):
         super(VGG, self).__init__()
         self.input_size = 32

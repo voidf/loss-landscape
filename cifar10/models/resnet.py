@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class BasicBlock(nn.Module):
+class BasicBlock(torch.jit.ScriptModule):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1):
@@ -26,7 +26,7 @@ class BasicBlock(nn.Module):
         out = F.relu(out)
         return out
 
-class BasicBlock_noshortcut(nn.Module):
+class BasicBlock_noshortcut(torch.jit.ScriptModule):
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1):
@@ -43,7 +43,7 @@ class BasicBlock_noshortcut(nn.Module):
         return out
 
 
-class Bottleneck(nn.Module):
+class Bottleneck(torch.jit.ScriptModule):
     expansion = 4
 
     def __init__(self, in_planes, planes, stride=1):
@@ -71,7 +71,7 @@ class Bottleneck(nn.Module):
         return out
 
 
-class Bottleneck_noshortcut(nn.Module):
+class Bottleneck_noshortcut(torch.jit.ScriptModule):
     expansion = 4
 
     def __init__(self, in_planes, planes, stride=1):
@@ -90,7 +90,7 @@ class Bottleneck_noshortcut(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
+class ResNet(torch.jit.ScriptModule):
     def __init__(self, block, num_blocks, num_classes=10):
         super(ResNet, self).__init__()
         self.in_planes = 64
@@ -123,7 +123,7 @@ class ResNet(nn.Module):
         return out
 
 
-class ResNet_cifar(nn.Module):
+class ResNet_cifar(torch.jit.ScriptModule):
     def __init__(self, block, num_blocks, num_classes=10):
         super(ResNet_cifar, self).__init__()
         self.in_planes = 16
@@ -154,7 +154,7 @@ class ResNet_cifar(nn.Module):
         return out
 
 
-class WResNet_cifar(nn.Module):
+class WResNet_cifar(torch.jit.ScriptModule):
     def __init__(self, block, num_blocks, k, num_classes=10):
         super(WResNet_cifar, self).__init__()
         self.in_planes = 16*k

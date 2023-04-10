@@ -1,5 +1,7 @@
 from cmath import isnan
+import datetime
 import functools
+import shutil
 from fastapi import HTTPException
 import json
 import math
@@ -17,23 +19,35 @@ from loguru import logger
 from fastapi.middleware.cors import CORSMiddleware
 from concurrent.futures import ProcessPoolExecutor
 from cifar10.model_loader import load
+from dataloader import load_dataset
+from evaluation import eval_loss
 from net_plotter import get_weights
 from pref import find_arch
 from wrappers import cat
 from torch import Tensor
 import torch.optim
-from scan_traj import cat_tensor, get_states, write_buf_no_nbt, write_states, write_weights
+from scan_traj import cat_tensor, get_states, write_buf_no_nbt, write_nbt, write_states, write_weights
 import torch.multiprocessing as mp
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from safetensors import safe_open
 
+import numpy as np
+
+torch.backends.cuda.matmul.allow_tf32 = True
+
 model_dir = 'trained/'
 worker_cnt = 5
 # pool = None
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
+
+history_dir = 'history'
+def ensure_his_dir(subdir: str) -> str:
+    if not os.path.exists(hd := cat(history_dir, subdir)):
+        os.mkdir(hd)
+    return hd
 
 def train_consumer(q1: mp.Queue):
     from scan_traj import scan
@@ -180,13 +194,14 @@ class ArgsPCA(BaseModel):
     proj: str
     weight: bool = True
 
-def translate_u_path(u: str) -> List[str]:
+def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
     path = u.split('/')
-    m = f'model_{path.pop()}.safetensors'
+    m = f'model_{path.pop()}.{suffix}'
     for p, i in enumerate(path):
         f, b = i.split('.')
         path[p] = f'model_{f}B{b}'
-    path.append(m)
+    if not dir_only:
+        path.append(m)
     return path
 
 @app.post('/pca')
@@ -195,7 +210,6 @@ async def _(argu: ArgsPCA):
     logger.info(argu)
     if len(argu.selection) == 0:
         raise HTTPException(400, 'empty selection')
-    import numpy as np
     proj = model_dir + argu.proj
     pca = PCA(2)
 
@@ -299,7 +313,7 @@ class ArgsTrain(BaseModel):
     proj: str
 
 @app.post('/train')
-async def _(argu: ArgsTrain, b: BackgroundTasks, r: Response):
+async def _(argu: ArgsTrain, r: Response):
     path = u_resolver([argu.u], model_dir + argu.proj)[0]
     dire = path.rsplit('/', 1)[0]
     from_epoch = int(argu.u.rsplit('/')[-1])
@@ -329,7 +343,6 @@ class ArgsHeatmap(BaseModel):
     proj: str
 
 @app.post('/heatmap')
-# @cache()
 async def _(argu: ArgsHeatmap):
     import evaluation
     import copy
@@ -409,10 +422,138 @@ async def _(argu: ArgsHeatmap):
             'tea': test_acc,
         })
     logger.debug(ret)
+    with open(cat(ensure_his_dir('heatmap'), datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + '.json'), 'w') as f:
+        json.dump(ret, f)
+
     return ret
+
+class ArgsDisturb(BaseModel):
+    u: str
+    mag: float
+    proj: str
+
+@app.post('/disturb')
+async def _(a: ArgsDisturb):
+    from safetensors.torch import save_file
+
+    with torch.no_grad():
+        arch = find_arch(a.proj)
+        net = load(arch)
+        proj = model_dir + a.proj
+        from_epoch = int(a.u.rsplit('/', 1)[-1])
+        fn = f'model_{from_epoch}'
+        e = from_epoch + 1
+        for pa in os.listdir(proj): pass
+        projdir = functools.partial(cat, proj, pa, *translate_u_path(a.u, dir_only=True))
+
+
+        with safe_open(projdir(fn + '.safetensors'), framework='pt', device='cuda') as fil:
+            param: torch.Tensor = fil.get_tensor('param')
+            buf: torch.Tensor = fil.get_tensor('buf')
+            nbt: torch.Tensor = fil.get_tensor('nbt')
+
+        param += 2 * a.mag * (torch.rand(param.shape, device='cuda') - 0.5) # [-a.mag, a.mag] 均匀分布
+        write_weights(net, param)
+        write_buf_no_nbt(net, buf)
+        write_nbt(net, nbt)
+
+        if not os.path.exists(projdir(f'model_{e}.safetensors')):
+            branch_dir = '.'
+        else:
+            idx = 1
+            s = set() # MEX
+            for i in os.listdir(projdir()):
+                if os.path.isdir(projdir(i)) and i.startswith(fn + 'B'):
+                    if len(os.listdir(projdir(i))) == 0:
+                        os.rmdir(projdir(i))
+                    else:
+                        s.add(int(i.rsplit('B', 1)[1]))
+            while idx in s: idx += 1
+
+            branch_dir = f'{fn}B{idx}'
+            os.mkdir(projdir(branch_dir))
+            print(f'make dir {projdir(branch_dir)}')
+
+        js = {}
+        try:
+            with open(projdir(fn + '.json') , 'r') as f:
+                js = json.load(f)
+        except:
+            print('[not found]', fn + '.json')
+        js['epoch'] = e
+        js['disturb'] = a.mag
+
+        t1, t2 = load_dataset(threads=2)
+        criterion = torch.nn.CrossEntropyLoss().cuda()
+        js['trl'], js['tra'] = eval_loss(net, criterion, t1)
+        js['tel'], js['tea'] = eval_loss(net, criterion, t2)
+
+    save_file({
+        'param': param,
+        'buf': buf,
+        'nbt': nbt
+        }, projdir(branch_dir, f'model_{e}.safetensors'))
+    with open(projdir(branch_dir, f'model_{e}.json'), 'w') as fil:
+        json.dump(js, fil)
+    try:
+        shutil.copy(projdir(f"opt_state_{from_epoch}.t7"), projdir(branch_dir, f"opt_state_{e}.t7"))
+    except Exception as exc:
+        print(exc)
+    return js
+
+class ArgsDistance(BaseModel):
+    proj: str
+    selection: List[str]
+
+@app.post('/distance')
+async def _(a: ArgsDistance):
+    di = []
+    if len(a.selection) < 2:
+        return di
+    proj = model_dir + a.proj
+    for pa in os.listdir(proj): pass
+
+    for i in range(len(a.selection)):
+        ti = cat(proj, pa, *translate_u_path(a.selection[i]))
+        with safe_open(ti, framework='pt', device='cuda:0') as f:
+            pi: np.ndarray = f.get_tensor('param')
+
+        for j in range(i + 1, len(a.selection)):
+            tj = cat(proj, pa, *translate_u_path(a.selection[j]))
+            with safe_open(tj, framework='pt', device='cuda:0') as f:
+                pj: np.ndarray = f.get_tensor('param')
+            di.append(torch.norm(pi - pj).item())
+
+    assert len(a.selection) == 2
+    his_file = cat(proj, pa, 'distance_history.json')
+    with open(his_file, 'a', encoding='utf-8') as f:
+        f.write(f'{a.selection[0]}\t{a.selection[1]}\t{di[0]}\n')
+
+
+    return di
+
+@app.get('/distance_history')
+async def _(proj: str):
+    proj = model_dir + proj
+    for pa in os.listdir(proj): pass
+    his_file = cat(proj, pa, 'distance_history.json')
+    
+    if not os.path.exists(his_file):
+        return []
+    li = []
+    with open(his_file, 'r', encoding='utf-8') as f:
+        for elem in f.read().split('\n'):
+            li.append(list(elem.split('\t')))
+            # p1, p2, dist = elem.split('\t')
+            # li.append([p1, p2, float(dist)])
+    return li
+
+
+
 
 
 if __name__ == "__main__":
+    os.environ["SAFETENSORS_FAST_GPU"] = "1"
     global t_manager, t_queue, t_consumers
     t_manager = mp.Manager()
     t_queue = t_manager.Queue()

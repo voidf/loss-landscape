@@ -133,8 +133,11 @@ def scan(
         raise NameError("Unknown optimizer name")
 
     if t7.get('optimizer', '') == opt:
-        ot7 = torch.load(projdir(f'opt_state_{from_epoch}.t7'))
-        optimizer.load_state_dict(ot7['optimizer'])
+        try:
+            ot7 = torch.load(projdir(f'opt_state_{from_epoch}.t7'))
+            optimizer.load_state_dict(ot7['optimizer'])
+        except:
+            print('[no exist]', f'opt_state_{from_epoch}.t7')
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -159,6 +162,12 @@ def scan(
 
 
     trainloader, testloader = dataloader.c10()
+
+    # net = torch.compile(net)
+    # from accelerate import Accelerator
+
+    # acc = Accelerator(mixed_precision='bf16')
+    # net, optimizer, trainloader = acc.prepare(net, optimizer, trainloader)
 
 
     from main import train, test

@@ -10,8 +10,12 @@ from loguru import logger
 from cifar10.model_loader import *
 from dataloader import load_dataset
 from wrappers import *
+
 import torch.multiprocessing as mp
 import evaluation
+
+from accelerate import Accelerator
+
 
 def plot_curve(points, acc, name = '3D_curve', savePath='figures_autopath/3d_PCA', mode=3):
     points = np.array(points)

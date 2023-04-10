@@ -3,6 +3,7 @@ import os
 import torch
 import torchvision
 import torchvision.transforms as transforms
+from accelerate import Accelerator
 
 def c10():
     normalize = transforms.Normalize(
