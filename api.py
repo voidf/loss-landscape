@@ -524,29 +524,74 @@ async def _(a: ArgsDistance):
                 pj: np.ndarray = f.get_tensor('param')
             di.append(torch.norm(pi - pj).item())
 
-    assert len(a.selection) == 2
-    his_file = cat(proj, pa, 'distance_history.json')
-    with open(his_file, 'a', encoding='utf-8') as f:
-        f.write(f'{a.selection[0]}\t{a.selection[1]}\t{di[0]}\n')
+    # assert len(a.selection) == 2
+    # his_file = cat(proj, pa, 'distance_history.json')
+    # with open(his_file, 'a', encoding='utf-8') as f:
+        # f.write(f'{a.selection[0]}\t{a.selection[1]}\t{di[0]}\n')
 
 
     return di
 
-@app.get('/distance_history')
+# @app.get('/distance_history')
+# async def _(proj: str):
+#     proj = model_dir + proj
+#     for pa in os.listdir(proj): pass
+#     his_file = cat(proj, pa, 'distance_history.json')
+    
+#     if not os.path.exists(his_file):
+#         return []
+#     li = []
+#     with open(his_file, 'r', encoding='utf-8') as f:
+#         for elem in f.read().split('\n'):
+#             li.append(list(elem.split('\t')))
+#             # p1, p2, dist = elem.split('\t')
+#             # li.append([p1, p2, float(dist)])
+#     return li
+
+class ArgsDumpSnapshot(BaseModel):
+    proj: str
+    j: str
+
+@app.post('/snapshot')
+async def _(a: ArgsDumpSnapshot):
+    proj = model_dir + a.proj
+    js = json.loads(a.j)
+    js['t'] = datetime.datetime.now().timestamp()
+    for pa in os.listdir(proj): pass
+    with open(cat(proj, pa, 'snapshots.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(js) + '\n')
+
+@app.get('/snapshot')
 async def _(proj: str):
     proj = model_dir + proj
     for pa in os.listdir(proj): pass
-    his_file = cat(proj, pa, 'distance_history.json')
-    
-    if not os.path.exists(his_file):
-        return []
-    li = []
-    with open(his_file, 'r', encoding='utf-8') as f:
-        for elem in f.read().split('\n'):
-            li.append(list(elem.split('\t')))
-            # p1, p2, dist = elem.split('\t')
-            # li.append([p1, p2, float(dist)])
-    return li
+    filename = cat(proj, pa, 'snapshots.jsonl')
+    if not os.path.exists(filename): return []
+    with open(filename, 'r', encoding='utf-8') as f:
+        ret = f.read().split('\n')
+    while ret and not ret[-1]:
+        ret.pop()
+    return ret
+
+class ArgsDeleteSnapshot(BaseModel):
+    proj: str
+    index: int
+@app.delete('/snapshot')
+async def _(a: ArgsDeleteSnapshot):
+    proj = model_dir + a.proj
+    for pa in os.listdir(proj): pass
+    filename = cat(proj, pa, 'snapshots.jsonl')
+    if not os.path.exists(filename):
+        raise HTTPException(404)
+    with open(filename, 'r+', encoding='utf-8') as f:
+        ret = f.read().split('\n')
+        ret.pop(a.index)
+        f.seek(0)
+        f.write('\n'.join(ret)) # 有后导换行，不用另外写 + '\n' 大概
+        f.truncate()
+
+
+
 
 
 

@@ -21,14 +21,14 @@ from math import prod
 if __name__ == '__main__':
 
     for d in os.listdir('trained'):
-        if d.startswith('R56'):
+        if d.startswith('D121'):
             ar = find_arch(d)
             net = load(ar)
             for di in os.listdir(d1 := cat('trained', d)):
                 for dirpath, _, fn in os.walk(d2 := cat(d1, di)):
                     for t7 in fn:
-                        # if t7.endswith('.t7') and t7.startswith('model_'):
-                        if t7.endswith('.safetensors') and t7.startswith('model_'):
+                        if t7.endswith('.t7') and t7.startswith('model_'):
+                        # if t7.endswith('.safetensors') and t7.startswith('model_'):
 
                             # if os.path.exists(t7path + '.net1'):
                             #     os.remove(t7path + '.net1')
@@ -87,9 +87,9 @@ if __name__ == '__main__':
 
 
 
-                            # convert_ckpt()
-                            # remove_ckpt()
-                            json_desc_update()
+                            convert_ckpt()
+                            remove_ckpt()
+                            # json_desc_update()
 
                             # def convert_opt():
                             #     oppath = cat(dirpath, 'opt_state'+t7.removeprefix('model'))
