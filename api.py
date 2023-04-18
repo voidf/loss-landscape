@@ -1,6 +1,7 @@
 from cmath import isnan
 import datetime
 import functools
+import random
 import shutil
 from fastapi import HTTPException
 import json
@@ -26,12 +27,13 @@ from pref import find_arch
 from wrappers import cat
 from torch import Tensor
 import torch.optim
-from scan_traj import cat_tensor, get_states, write_buf_no_nbt, write_nbt, write_states, write_weights
+from scan_traj import cat_tensor, get_buf_no_nbt, get_nbt, get_states, write_buf_no_nbt, write_nbt, write_states, write_weights
 import torch.multiprocessing as mp
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from safetensors import safe_open
+from main import init_params
 
 import numpy as np
 
@@ -330,7 +332,85 @@ async def _(argu: ArgsTrain, r: Response):
         dire))
     r.status_code = 202
     return r
-        
+
+class ArgsNewproj(BaseModel):
+    lr: float
+    bs: int
+    mom: float
+    wd: float
+    seed: int
+    op: str
+    e: int
+    proj: str
+    arch: str
+
+def name_save_folder(args):
+    save_folder = args.arch + '_' + str(args.op) + '_lr=' + str(args.lr)
+    save_folder += '_bs=' + str(args.bs)
+    save_folder += '_wd=' + str(args.wd)
+    save_folder += '_mom=' + str(args.mom)
+    save_folder += '_seed=' + str(args.seed)
+    return save_folder
+
+@app.post('/newproj')
+async def _(a: ArgsNewproj, r: Response):
+    """{
+  "lr": 0.1,
+  "bs": 128,
+  "mom": 0.9,
+  "wd": 0.0005,
+  "seed": 30,
+  "op": "sgd",
+  "e": 150,
+  "proj": "R56_10",
+  "arch": "resnet56"
+}"""
+    net = load(a.arch)
+    init_params(net)
+    random.seed(a.seed)
+    np.random.seed(a.seed)
+    torch.manual_seed(a.seed)
+
+    proj = model_dir + a.proj
+    if os.path.exists(proj):
+        raise HTTPException(403)
+    os.mkdir(proj)
+    fd = cat(proj, name_save_folder(a))
+    os.mkdir(fd)
+    projdir = functools.partial(cat, fd)
+    with open(projdir('model_0.json'), 'w', encoding='utf-8') as f:
+        json.dump({
+            'batch_size': a.bs,
+            'random_seed': a.seed,
+            'epoch': 0,
+            'optimizer': a.op,
+            'lr': a.lr,
+            'momentum': a.mom,
+            'weight_decay': a.wd,
+        }, f)
+    
+    from safetensors.torch import save_file
+    save_file({
+        'param': cat_tensor(get_weights(net)),
+        'buf': cat_tensor(get_buf_no_nbt(net)),
+        'nbt': cat_tensor(get_nbt(net))
+    }, projdir('model_0.safetensors'))
+    t_queue.put((
+        a.arch,
+        0,
+        a.e,
+        a.lr,
+        a.mom,
+        a.wd,
+        a.bs,
+        a.op,
+        a.seed,
+        fd))
+    
+
+    r.status_code = 202
+    return r
+
 class ArgsHeatmap(BaseModel):
     xstep: int
     ystep: int
@@ -451,8 +531,11 @@ async def _(a: ArgsDisturb):
             param: torch.Tensor = fil.get_tensor('param')
             buf: torch.Tensor = fil.get_tensor('buf')
             nbt: torch.Tensor = fil.get_tensor('nbt')
+        
+        init_params(net)
+        random_param = cat_tensor(get_weights(net)) # 用kaiming_normal_
 
-        param += 2 * a.mag * (torch.rand(param.shape, device='cuda') - 0.5) # [-a.mag, a.mag] 均匀分布
+        param += a.mag * random_param # [-a.mag, a.mag] kaiming_normal_分布
         write_weights(net, param)
         write_buf_no_nbt(net, buf)
         write_nbt(net, nbt)
