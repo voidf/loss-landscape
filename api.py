@@ -206,23 +206,18 @@ def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
         path.append(m)
     return path
 
-@app.post('/pca')
-# @cache(expire=60)
-async def _(argu: ArgsPCA):
-    logger.info(argu)
-    if len(argu.selection) == 0:
+def gather_selected_tensors(a):
+    if len(a.selection) == 0:
         raise HTTPException(400, 'empty selection')
-    proj = model_dir + argu.proj
-    pca = PCA(2)
+    proj = model_dir + a.proj
 
     nplist = []
     avg = None
         
-    net = load(find_arch(argu.proj))
     # weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
 
     for j in os.listdir(proj):
-        for i in argu.selection:
+        for i in a.selection:
             with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
                 param: np.ndarray = fil.get_tensor('param')
                 buf: np.ndarray = fil.get_tensor('buf')
@@ -232,35 +227,27 @@ async def _(argu: ArgsPCA):
                 avg = cated.copy()
             else:
                 avg += cated
-            with open(fp.removesuffix('safetensors') + 'json') as fil:
-                t7 = json.load(fil)
             # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             # ts = ts.numpy() # 输出： param + buf
-            if argu.weight:
+            if a.weight:
                 nplist.append(param)
             else:
                 nplist.append(cated)
             # nplist.append(ts[:weight_len])
-
-
-    # for ts in enum_path():
-        # nplist.append(ts)
-    # avg = nplist.mean(axis=0)
     avg /= len(nplist)
     nplist = np.array(nplist)
+    return avg, nplist
 
-    # pca.fit(nplist)
+
+@app.post('/pca')
+async def _(argu: ArgsPCA):
+    avg, nplist = gather_selected_tensors(argu)
     logger.debug('nplist len: {}', len(nplist))
+    # projection ===
+    pca = PCA(2)
     newlist = pca.fit_transform(nplist).tolist()
     axis: np.ndarray = pca.components_[:2]
-    # for p, it in enumerate(enum_path()):
-        # i = newlist[p]
     for p, i in enumerate(newlist):
-        # D = (nplist[p] - avg)
-        # X = D.dot(axis[0])
-        # Y = D.dot(axis[1])
-        # DX = i[0] - X
-        # DY = i[1] - Y # 等价的，误差在e-07数量级左右
         newlist[p] = {
             'x': i[0],
             'y': i[1],
@@ -272,13 +259,34 @@ async def _(argu: ArgsPCA):
         'mean': avg.tolist(),
         'coord': newlist,
     }
+from sklearn.manifold import TSNE
+
+@app.post('/tsne')
+async def _(a: ArgsPCA):
+    avg, nplist = gather_selected_tensors(a)
+    logger.debug('nplist len: {}', len(nplist))
+    # projection ===
+    tsne = TSNE(2, perplexity=10, n_iter=3000, learning_rate='auto')
+    newlist = tsne.fit_transform(nplist).tolist()
+    # axis: np.ndarray = tsne.components_[:2]
+    for p, i in enumerate(newlist):
+        newlist[p] = {
+            'x': i[0],
+            'y': i[1],
+            'u': a.selection[p],
+            'l': cat(*a.selection[p].split('/')[:-1]),
+        }
+    return {
+        # 'axis': axis.tolist(),
+        'mean': avg.tolist(),
+        'coord': newlist,
+    }
 
 class ArgsMeta(BaseModel):
     selection: List[str]
     proj: str
 
 @app.post('/meta')
-# @cache()
 async def _(argu: ArgsMeta):
     logger.info(argu)
     if len(argu.selection) == 0:
