@@ -3,6 +3,7 @@ manifest = (
     ('R56_', 'resnet56', 20),
     ('tn', 'vgg9', 0),
     ('D121_', 'densenet121', 120),
+    ('LE_', 'lenet', 0),
 )
 
 def find_arch(proj: str):

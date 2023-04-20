@@ -40,7 +40,7 @@ import numpy as np
 torch.backends.cuda.matmul.allow_tf32 = True
 
 model_dir = 'trained/'
-worker_cnt = 5
+worker_cnt = 6
 # pool = None
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
@@ -220,7 +220,10 @@ def gather_selected_tensors(a):
         for i in a.selection:
             with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
                 param: np.ndarray = fil.get_tensor('param')
-                buf: np.ndarray = fil.get_tensor('buf')
+                try:
+                    buf: np.ndarray = fil.get_tensor('buf')
+                except:
+                    buf = np.array([])
                 # nbt: np.ndarray = fil.get_tensor('nbt')
             cated = np.concatenate((param, buf))
             if avg is None:
@@ -396,13 +399,16 @@ async def _(a: ArgsNewproj, r: Response):
             'momentum': a.mom,
             'weight_decay': a.wd,
         }, f)
-    
     from safetensors.torch import save_file
-    save_file({
+
+    saved_dict = {
         'param': cat_tensor(get_weights(net)),
-        'buf': cat_tensor(get_buf_no_nbt(net)),
-        'nbt': cat_tensor(get_nbt(net))
-    }, projdir('model_0.safetensors'))
+    }
+    # 这俩不一定有
+    if x := get_buf_no_nbt(net): saved_dict['buf'] = cat_tensor(x)
+    if x := get_nbt(net): saved_dict['nbt'] = cat_tensor(x)
+
+    save_file(saved_dict, projdir('model_0.safetensors'))
     t_queue.put((
         a.arch,
         0,
@@ -454,7 +460,10 @@ async def _(argu: ArgsHeatmap):
                 # param = fil.get_tensor('param')
                 # buf = fil.get_tensor('buf')
                 write_weights(net, param := fil.get_tensor('param'))
-                write_buf_no_nbt(net, buf := fil.get_tensor('buf'))
+                try:
+                    write_buf_no_nbt(net, buf := fil.get_tensor('buf'))
+                except:
+                    buf = torch.tensor([])
             
             argu.mean = torch.cat((param, buf))
             # argu.mean = t7_to_tensor(argu.arch, cat(proj, j, *translate_u_path(argu.u)))
@@ -537,8 +546,14 @@ async def _(a: ArgsDisturb):
 
         with safe_open(projdir(fn + '.safetensors'), framework='pt', device='cuda') as fil:
             param: torch.Tensor = fil.get_tensor('param')
-            buf: torch.Tensor = fil.get_tensor('buf')
-            nbt: torch.Tensor = fil.get_tensor('nbt')
+            try:
+                buf: torch.Tensor = fil.get_tensor('buf')
+            except:
+                buf = torch.tensor([])
+            try:
+                nbt: torch.Tensor = fil.get_tensor('nbt')
+            except:
+                nbt = torch.tensor([])
         
         init_params(net)
         random_param = cat_tensor(get_weights(net)) # 用kaiming_normal_

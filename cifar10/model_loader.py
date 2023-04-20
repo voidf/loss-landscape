@@ -6,7 +6,7 @@ import cifar10.models.densenet as densenet
 import cifar10.models.cnn as cnn
 # map between model name and function
 models = {
-    'vggs'                  : vgg.VGGS,
+    # 'vggs'                  : vgg.VGGS,
     'vgg9'                  : vgg.VGG9,
     'densenet121'           : densenet.DenseNet121,
     'resnet18'              : resnet.ResNet18,
@@ -36,7 +36,14 @@ models = {
     'wrn56_8_noshort'       : resnet.WRN56_8_noshort,
     'wrn110_2_noshort'      : resnet.WRN110_2_noshort,
     'wrn110_4_noshort'      : resnet.WRN110_4_noshort,
-    'lenet'                 : cnn.LeNet,
+    'lenet'                 : cnn.LeNet_CIFAR10,
+    'cnn12'                 : cnn.CNN12_CIFAR10,
+    'cnn24'                 : cnn.CNN24_CIFAR10,
+    'cnn36'                 : cnn.CNN36_CIFAR10,
+    'cnn48'                 : cnn.CNN48_CIFAR10,
+    'cnn96'                 : cnn.CNN96_CIFAR10,
+    'cnn48x2'                 : cnn.CNN48x2_CIFAR10,
+    'cnn48x3'                 : cnn.CNN48x3_CIFAR10,
 }
 
 def load(model_name, model_file=None, data_parallel=False):

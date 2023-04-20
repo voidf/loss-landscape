@@ -118,8 +118,14 @@ def scan(
     os.environ["SAFETENSORS_FAST_GPU"] = "1"
     with safe_open(projdir(fn + '.safetensors'), framework="pt", device="cuda:0") as fil:
         write_weights(net, fil.get_tensor('param'))
-        write_buf_no_nbt(net, fil.get_tensor('buf'))
-        write_nbt(net, fil.get_tensor('nbt'))
+        try:
+            write_buf_no_nbt(net, fil.get_tensor('buf'))
+        except:
+            print('model does not contain buffer')
+        try:
+            write_nbt(net, fil.get_tensor('nbt'))
+        except:
+            print('model does not contain num_batches_tracked')
         
     # net.load_state_dict(t7['state_dict'])
 
@@ -197,11 +203,15 @@ def scan(
             'weight_decay': wd,
             # 'state_dict': net.state_dict(),
         }
-        save_file({
+        saved_dict = {
             'param': cat_tensor(get_weights(net)),
-            'buf': cat_tensor(get_buf_no_nbt(net)),
-            'nbt': cat_tensor(get_nbt(net))
-            }, projdir(branch_dir, f'model_{e}.safetensors'))
+        }
+        # 这俩不一定有
+        if x := get_buf_no_nbt(net): saved_dict['buf'] = cat_tensor(x)
+        if x := get_nbt(net): saved_dict['nbt'] = cat_tensor(x)
+
+        save_file(saved_dict, projdir(branch_dir, f'model_{e}.safetensors'))
+        
         with open(projdir(branch_dir, f'model_{e}.json'), 'w') as fil:
             json.dump(state, fil)
         opt_state = {

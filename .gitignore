@@ -19,3 +19,4 @@ data/
 *.acc
 logs.txt
 lenet*/
+trained/
