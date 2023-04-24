@@ -44,6 +44,27 @@ def apply(weights, amount=0.0, round_to=1, p=1)->  Sequence[int]:  # return inde
     indices = torch.nonzero(l1_norm <= threshold).view(-1).tolist()
     return indices
 
+# 这个要导出给外面用
+def generate_mex_branch_dir(projdir: str, from_epoch: int):
+    fn = f'model_{from_epoch}'
+    projdir = partial(cat, projdir)
+    if not os.path.exists(projdir(f'model_{from_epoch + 1}.safetensors')):
+        branch_dir = '.'
+    else:
+        idx = 1
+        s = set() # MEX
+        for i in os.listdir(projdir()):
+            if os.path.isdir(projdir(i)) and i.startswith(fn + 'B'):
+                if len(os.listdir(projdir(i))) == 0:
+                    os.rmdir(projdir(i))
+                else:
+                    s.add(int(i.rsplit('B', 1)[1]))
+        while idx in s: idx += 1
+
+        branch_dir = f'{fn}B{idx}'
+        os.mkdir(projdir(branch_dir))
+        print(f'make dir {projdir(branch_dir)}')
+    return branch_dir
 
 def scan(
     arch = 'resnet56',
@@ -149,22 +170,7 @@ def scan(
         param_group['lr'] = lr
 
 
-    if not os.path.exists(projdir(f'model_{from_epoch + 1}.safetensors')):
-        branch_dir = '.'
-    else:
-        idx = 1
-        s = set() # MEX
-        for i in os.listdir(projdir()):
-            if os.path.isdir(projdir(i)) and i.startswith(fn + 'B'):
-                if len(os.listdir(projdir(i))) == 0:
-                    os.rmdir(projdir(i))
-                else:
-                    s.add(int(i.rsplit('B', 1)[1]))
-        while idx in s: idx += 1
-
-        branch_dir = f'{fn}B{idx}'
-        os.mkdir(projdir(branch_dir))
-        print(f'make dir {projdir(branch_dir)}')
+    branch_dir = generate_mex_branch_dir(projdir(), from_epoch)
 
 
     trainloader, testloader = dataloader.c10()

@@ -1,16 +1,14 @@
 from cmath import isnan
 import datetime
 import functools
+import pickle
 import random
 import shutil
 from fastapi import HTTPException
 import json
 import math
-import operator
 import traceback
 from typing import List, Optional
-from cv2 import reduce
-import fastapi
 import os
 from pydantic import BaseModel
 from sklearn.decomposition import PCA
@@ -29,27 +27,23 @@ from torch import Tensor
 import torch.optim
 from scan_traj import cat_tensor, get_buf_no_nbt, get_nbt, get_states, write_buf_no_nbt, write_nbt, write_states, write_weights
 import torch.multiprocessing as mp
-from fastapi_cache.decorator import cache
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.inmemory import InMemoryBackend
 from safetensors import safe_open
 from main import init_params
-
+import hashlib
+import copy
+import base64
 import numpy as np
+import evaluation
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
-model_dir = 'trained/'
-worker_cnt = 6
+MODEL_DIR = 'trained/'
+WORKER_CNT = 4
+PCA_CACHE_DIR = '_pca_cache/'
+PCA_CACHE_CNT = 100
 # pool = None
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request, Response
-
-history_dir = 'history'
-def ensure_his_dir(subdir: str) -> str:
-    if not os.path.exists(hd := cat(history_dir, subdir)):
-        os.mkdir(hd)
-    return hd
 
 def train_consumer(q1: mp.Queue):
     from scan_traj import scan
@@ -108,34 +102,30 @@ def preload() -> FastAPI:
 
 app = preload()
 
-@app.on_event("startup")
-async def _():
-    FastAPICache.init(InMemoryBackend())
 
 @app.get('/models')
-@cache()
 async def _():
     l = []
-    for i in os.listdir(model_dir):
+    for i in os.listdir(MODEL_DIR):
         l.append(i)
     return l
 
 @app.get('/list')
-@cache()
 async def _(proj: str):
-    proj = model_dir + proj
+    proj = MODEL_DIR + proj
     d = {}
     root = True
-    for i in os.listdir(proj): # 跳过超参记录夹
-        for dp, dn, fn in os.walk(cat(proj, i)):
-            sp = dp.removeprefix(cat(proj, i)).split(os.sep)
-            t7s = [i for i in fn if i.endswith('.safetensors') and i.startswith('model_')]
-            key = cat(*sp[1:])
-            if root:
-                root = False
-                key = ''
-            if t7s:
-                d[key] = t7s
+    for i in os.listdir(proj): pass# 跳过超参记录夹
+    for dp, dn, fn in os.walk(cat(proj, i)):
+        sp = dp.removeprefix(cat(proj, i)).split(os.sep)
+        t7s = [i for i in fn if i.endswith('.safetensors') and i.startswith('model_')]
+        key = cat(*sp[1:])
+        if root:
+            root = False
+            key = ''
+        if t7s:
+            d[key] = t7s
+
     l = []
     dd = {}
     for k, v in d.items():
@@ -143,7 +133,7 @@ async def _(proj: str):
         pk3 = []
         kp = []
         if k:
-            for p, i in enumerate(pk):
+            for p, i in enumerate(pk): # 拆目录
                 # logger.debug(f"i:{i} pk:{pk} k:{k}")
                 father, no = i.removeprefix('model_').split('B')
                 # pk[p] = int(father)
@@ -184,12 +174,7 @@ async def _(proj: str):
         it['y'] = dd.setdefault(p3s, len(dd))
         it['u'] = cat(p3s, str(it['x'])).removeprefix('/')
 
-
-    # logger.debug(l)
-    ddl = [None for _ in dd]
-    for k, v in dd.items(): ddl[v] = k
-
-    return {'label': ddl, 'points': l}
+    return {'points': l}
 
 class ArgsPCA(BaseModel):
     selection: List[str]
@@ -206,10 +191,10 @@ def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
         path.append(m)
     return path
 
-def gather_selected_tensors(a):
-    if len(a.selection) == 0:
+def gather_selected_tensors(proj: str, selection: list[str], only_weight=True):
+    if len(selection) == 0:
         raise HTTPException(400, 'empty selection')
-    proj = model_dir + a.proj
+    proj = MODEL_DIR + proj
 
     nplist = []
     avg = None
@@ -217,7 +202,7 @@ def gather_selected_tensors(a):
     # weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
 
     for j in os.listdir(proj):
-        for i in a.selection:
+        for i in selection:
             with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
                 param: np.ndarray = fil.get_tensor('param')
                 try:
@@ -232,7 +217,7 @@ def gather_selected_tensors(a):
                 avg += cated
             # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             # ts = ts.numpy() # 输出： param + buf
-            if a.weight:
+            if only_weight:
                 nplist.append(param)
             else:
                 nplist.append(cated)
@@ -241,11 +226,20 @@ def gather_selected_tensors(a):
     nplist = np.array(nplist)
     return avg, nplist
 
+def generate_pca_cache_fn(proj: str, selection: list[str]):
+    dig = hashlib.md5(','.join(selection).encode()).digest()
+    b64 = f'{proj}-' + base64.b64encode(dig).decode('utf-8')
+    return PCA_CACHE_DIR + b64 + '.pkl'
 
-@app.post('/pca')
-async def _(argu: ArgsPCA):
-    avg, nplist = gather_selected_tensors(argu)
-    logger.debug('nplist len: {}', len(nplist))
+def ensure_pca_cache(proj: str, selection: list[str], only_weight=True) -> dict:
+    selection.sort()
+    fn = generate_pca_cache_fn(proj + '' if only_weight else '-included-buf', selection)
+    if os.path.exists(fn):
+        print('cache found:', fn)
+        with open(fn, 'rb') as f:
+            return pickle.load(f)
+
+    avg, nplist = gather_selected_tensors(proj, selection, only_weight)
     # projection ===
     pca = PCA(2)
     newlist = pca.fit_transform(nplist).tolist()
@@ -254,19 +248,37 @@ async def _(argu: ArgsPCA):
         newlist[p] = {
             'x': i[0],
             'y': i[1],
-            'u': argu.selection[p],
-            'l': cat(*argu.selection[p].split('/')[:-1]),
+            'u': selection[p],
+            'l': cat(*selection[p].split('/')[:-1]),
         }
-    return {
+
+    if len(cached_files := os.listdir(PCA_CACHE_DIR)) >= PCA_CACHE_CNT:
+
+        for p, i in enumerate(cached_files):
+            cached_files[p] = (os.path.getatime(PCA_CACHE_DIR + i), i)
+        cached_files.sort(key=lambda x: -x[0])
+        while len(cached_files) >= PCA_CACHE_CNT:
+            print('removed pca cache:', cached_files[-1])
+            os.remove(PCA_CACHE_DIR + cached_files.pop()[1])
+    d = {
         'axis': axis.tolist(),
         'mean': avg.tolist(),
         'coord': newlist,
     }
+    with open(fn, 'wb') as f:
+        pickle.dump(d, f)
+    return d
+
+
+@app.post('/pca')
+async def _(a: ArgsPCA):
+    return {'coord': ensure_pca_cache(a.proj, a.selection, a.weight)['coord']}
+
 from sklearn.manifold import TSNE
 
 @app.post('/tsne')
 async def _(a: ArgsPCA):
-    avg, nplist = gather_selected_tensors(a)
+    avg, nplist = gather_selected_tensors(a.proj, a.selection, a.weight)
     logger.debug('nplist len: {}', len(nplist))
     # projection ===
     tsne = TSNE(2, perplexity=10, n_iter=3000, learning_rate='auto')
@@ -281,7 +293,7 @@ async def _(a: ArgsPCA):
         }
     return {
         # 'axis': axis.tolist(),
-        'mean': avg.tolist(),
+        # 'mean': avg.tolist(),
         'coord': newlist,
     }
 
@@ -294,7 +306,7 @@ async def _(argu: ArgsMeta):
     logger.info(argu)
     if len(argu.selection) == 0:
         raise HTTPException(400, 'empty selection')
-    proj = model_dir + argu.proj
+    proj = MODEL_DIR + argu.proj
     meta = []
     for j in os.listdir(proj):
         for i in argu.selection:
@@ -305,9 +317,8 @@ async def _(argu: ArgsMeta):
 
 
 @app.get('/info')
-@cache()
 async def _(p: str, proj: str):
-    path = u_resolver([p], model_dir + proj)[0]
+    path = u_resolver([p], MODEL_DIR + proj)[0]
     with open(path.removesuffix('safetensors')+'json', 'r') as f:
         return json.load(f)
     # t7 = torch.load(path)
@@ -325,9 +336,16 @@ class ArgsTrain(BaseModel):
     e: int
     proj: str
 
+    
+# 插值目录规范：{u1}_{u2}_x/y 表示在u1和u2之间线性插值x/y倍
+# zlib.compress
+# 在meta接口里带一个clamp的key给插值目录信息，不写学习率、随机种子、wd等等
+# 在clamp接口里创建这些新分支点
+# 前端靠clamp的key来划线，在meta读入时处理这个labelsu
+
 @app.post('/train')
 async def _(argu: ArgsTrain, r: Response):
-    path = u_resolver([argu.u], model_dir + argu.proj)[0]
+    path = u_resolver([argu.u], MODEL_DIR + argu.proj)[0]
     dire = path.rsplit('/', 1)[0]
     from_epoch = int(argu.u.rsplit('/')[-1])
     t_queue.put((
@@ -382,7 +400,7 @@ async def _(a: ArgsNewproj, r: Response):
     np.random.seed(a.seed)
     torch.manual_seed(a.seed)
 
-    proj = model_dir + a.proj
+    proj = MODEL_DIR + a.proj
     if os.path.exists(proj):
         raise HTTPException(403)
     os.mkdir(proj)
@@ -426,34 +444,38 @@ async def _(a: ArgsNewproj, r: Response):
     return r
 
 class ArgsHeatmap(BaseModel):
+    selection: List[str]
     xstep: int
     ystep: int
     xstep_rate: float
     ystep_rate: float
-    mean: Optional[List[float]] = None
-    xdir: List[float]
-    ydir: List[float]
+    # mean: Optional[List[float]] = None
+    # xdir: List[float]
+    # ydir: List[float]
     u: Optional[str] = None
     proj: str
 
 @app.post('/heatmap')
 async def _(argu: ArgsHeatmap):
-    import evaluation
-    import copy
+    pca_data = ensure_pca_cache(argu.proj, argu.selection, True)
+
+    argu.xdir = pca_data['axis'][0]
+    argu.ydir = pca_data['axis'][1]
+    argu.mean = pca_data['mean']
 
     mng = mp.Manager()
-    q1 = mng.Queue(maxsize=worker_cnt)
+    q1 = mng.Queue(maxsize=WORKER_CNT)
     q2 = mng.Queue()
     consumers = [
         mp.Process(target=evaluation.epoch_consumer,
             args=(find_arch(argu.proj), q1, q2)
-        ) for _ in range(worker_cnt)
+        ) for _ in range(WORKER_CNT)
     ]
     for x in consumers: x.start()
 
     net = load(find_arch(argu.proj))
     if argu.u:
-        proj = model_dir + argu.proj
+        proj = MODEL_DIR + argu.proj
     
         for j in os.listdir(proj):
             with safe_open(cat(proj, j, *translate_u_path(argu.u)), framework="pt", device='cpu') as fil:
@@ -519,8 +541,6 @@ async def _(argu: ArgsHeatmap):
             'tea': test_acc,
         })
     logger.debug(ret)
-    with open(cat(ensure_his_dir('heatmap'), datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + '.json'), 'w') as f:
-        json.dump(ret, f)
 
     return ret
 
@@ -536,7 +556,7 @@ async def _(a: ArgsDisturb):
     with torch.no_grad():
         arch = find_arch(a.proj)
         net = load(arch)
-        proj = model_dir + a.proj
+        proj = MODEL_DIR + a.proj
         from_epoch = int(a.u.rsplit('/', 1)[-1])
         fn = f'model_{from_epoch}'
         e = from_epoch + 1
@@ -616,7 +636,7 @@ async def _(a: ArgsDistance):
     di = []
     if len(a.selection) < 2:
         return di
-    proj = model_dir + a.proj
+    proj = MODEL_DIR + a.proj
     for pa in os.listdir(proj): pass
 
     for i in range(len(a.selection)):
@@ -660,7 +680,7 @@ class ArgsDumpSnapshot(BaseModel):
 
 @app.post('/snapshot')
 async def _(a: ArgsDumpSnapshot):
-    proj = model_dir + a.proj
+    proj = MODEL_DIR + a.proj
     js = json.loads(a.j)
     js['t'] = datetime.datetime.now().timestamp()
     for pa in os.listdir(proj): pass
@@ -669,7 +689,7 @@ async def _(a: ArgsDumpSnapshot):
 
 @app.get('/snapshot')
 async def _(proj: str):
-    proj = model_dir + proj
+    proj = MODEL_DIR + proj
     for pa in os.listdir(proj): pass
     filename = cat(proj, pa, 'snapshots.jsonl')
     if not os.path.exists(filename): return []
@@ -684,7 +704,7 @@ class ArgsDeleteSnapshot(BaseModel):
     index: int
 @app.delete('/snapshot')
 async def _(a: ArgsDeleteSnapshot):
-    proj = model_dir + a.proj
+    proj = MODEL_DIR + a.proj
     for pa in os.listdir(proj): pass
     filename = cat(proj, pa, 'snapshots.jsonl')
     if not os.path.exists(filename):
@@ -696,22 +716,84 @@ async def _(a: ArgsDeleteSnapshot):
         f.write('\n'.join(ret)) # 有后导换行，不用另外写 + '\n' 大概
         f.truncate()
 
+class ArgsClamp(BaseModel):
+    u1: str
+    u2: str
+    ctr: int
+    proj: str
 
+@app.post('/clamp')
+async def _(a: ArgsClamp):
+    from scan_traj import generate_mex_branch_dir
+    from wrappers import lerp
+    from safetensors.torch import save_file
+    proj = MODEL_DIR + a.proj
+    arch = find_arch(a.proj)
+    for pa in os.listdir(proj): pass
+    with torch.no_grad():
+        with (safe_open(u1path := cat(proj, pa, *translate_u_path(a.u1)), framework='pt', device='cuda:0') as f1,
+            safe_open(cat(proj, pa, *translate_u_path(a.u2)), framework='pt', device='cuda:0') as f2):
+            d = {}
+            for sta in ['param', 'buf']:
+                try: d[sta] = [f1.get_tensor(sta), f2.get_tensor(sta)]
+                except: print(sta, 'no found in checkpoint!')
+            assert 'param' in d
+        sp = u1path.rsplit('/', 1)
+        assert len(sp) > 1
+        from_epoch = int(sp.pop().removeprefix('model_').removesuffix('.safetensors'))
+        sp = '/'.join(sp)
 
-
-
-
+        net = load(arch)
+        mng = mp.Manager()
+        q1 = mng.Queue(maxsize=WORKER_CNT)
+        q2 = mng.Queue()
+        consumers = [
+            mp.Process(target=evaluation.epoch_consumer,
+                args=(arch, q1, q2)
+            ) for _ in range(WORKER_CNT)
+        ]
+        branch_dirs = []
+        for x in consumers: x.start()
+        for i in range(a.ctr):
+            ckp = {k: lerp(v1, v2, (i + 1) / (a.ctr + 1)) for k, (v1, v2) in d.items()}
+            branch_dir = generate_mex_branch_dir(sp, from_epoch)
+            branch_dirs.append(branch_dir)
+            save_file(ckp, cat(sp, branch_dir, f'model_{from_epoch}.safetensors'))
+            write_weights(net, ckp['param'])
+            if 'buf' in ckp: write_buf_no_nbt(net, ckp['buf'])
+            net.cpu()
+            q1.put((i, copy.deepcopy(net.state_dict())))
+        for _ in consumers: q1.put(None)
+        for x in consumers: x.join()
+        r = []
+        for _ in range(a.ctr):
+            # tid, train_loss, train_acc, test_loss, test_acc = q2.get()
+            r.append(q2.get())
+        r.sort(key=lambda x: x[0])
+        for i, train_loss, train_acc, test_loss, test_acc in r:
+            with open(cat(sp, branch_dirs[i], f'model_{from_epoch}.json'), 'w') as f:
+                r[i] = {
+                    'tea': test_acc,
+                    'tel': test_loss,
+                    'tra': train_acc,
+                    'trl': train_loss,
+                    'epoch': from_epoch,
+                    'clamp': f'{a.u1}_{a.u2}_{i+1}/{a.ctr + 1}'
+                }
+                json.dump(r[i], f)
+        return r
 
 
 if __name__ == "__main__":
     os.environ["SAFETENSORS_FAST_GPU"] = "1"
+    if not os.path.exists(PCA_CACHE_DIR): os.mkdir(PCA_CACHE_DIR)
     global t_manager, t_queue, t_consumers
     t_manager = mp.Manager()
     t_queue = t_manager.Queue()
     t_consumers = [
         mp.Process(target=train_consumer,
             args=(t_queue,)
-        ) for _ in range(worker_cnt)
+        ) for _ in range(WORKER_CNT)
     ]
     for x in t_consumers: x.start()
     uvicorn.run(app, port=40000)

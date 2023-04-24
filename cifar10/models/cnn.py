@@ -88,6 +88,7 @@ class CNN(nn.Module):
         dense_layers = OrderedDict()
         for i in range(dense_depth):
             layer = OrderedDict()
+            print(previous_size, num_dense_units[i])
             layer["linear"] = nn.Linear(previous_size, num_dense_units[i])
             previous_size = num_dense_units[i]
             if batch_norm:

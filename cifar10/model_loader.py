@@ -4,6 +4,7 @@ import cifar10.models.vgg as vgg
 import cifar10.models.resnet as resnet
 import cifar10.models.densenet as densenet
 import cifar10.models.cnn as cnn
+import cifar10.models.effnet as effnet
 # map between model name and function
 models = {
     # 'vggs'                  : vgg.VGGS,
@@ -44,6 +45,7 @@ models = {
     'cnn96'                 : cnn.CNN96_CIFAR10,
     'cnn48x2'                 : cnn.CNN48x2_CIFAR10,
     'cnn48x3'                 : cnn.CNN48x3_CIFAR10,
+    'effnet_s'                 : effnet.effnetv2_s,
 }
 
 def load(model_name, model_file=None, data_parallel=False):
