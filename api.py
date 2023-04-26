@@ -165,7 +165,7 @@ async def _(proj: str):
             return 1
         else:
             return 0
-    l.sort(key=functools.cmp_to_key(lcmp)
+    l.sort(key=functools.cmp_to_key(lcmp) # 保证branch显示顺序
     # lambda it: it['p'] + it['p2'] + [it['x']]
     )
     for it in l:
@@ -191,7 +191,7 @@ def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
         path.append(m)
     return path
 
-def gather_selected_tensors(proj: str, selection: list[str], only_weight=True):
+def gather_selected_tensors(proj: str, selection: list[str], only_weight=True, calc_avg=True):
     if len(selection) == 0:
         raise HTTPException(400, 'empty selection')
     proj = MODEL_DIR + proj
@@ -210,11 +210,12 @@ def gather_selected_tensors(proj: str, selection: list[str], only_weight=True):
                 except:
                     buf = np.array([])
                 # nbt: np.ndarray = fil.get_tensor('nbt')
-            cated = np.concatenate((param, buf))
-            if avg is None:
-                avg = cated.copy()
-            else:
-                avg += cated
+            if calc_avg:
+                cated = np.concatenate((param, buf))
+                if avg is None:
+                    avg = cated.copy()
+                else:
+                    avg += cated
             # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             # ts = ts.numpy() # 输出： param + buf
             if only_weight:
@@ -222,8 +223,11 @@ def gather_selected_tensors(proj: str, selection: list[str], only_weight=True):
             else:
                 nplist.append(cated)
             # nplist.append(ts[:weight_len])
-    avg /= len(nplist)
+    
     nplist = np.array(nplist)
+    if not calc_avg:
+        return nplist
+    avg /= len(nplist)
     return avg, nplist
 
 def generate_pca_cache_fn(proj: str, selection: list[str]):
@@ -231,9 +235,9 @@ def generate_pca_cache_fn(proj: str, selection: list[str]):
     b64 = f'{proj}-' + base64.b64encode(dig).decode('utf-8')
     return PCA_CACHE_DIR + b64 + '.pkl'
 
-def ensure_pca_cache(proj: str, selection: list[str], only_weight=True) -> dict:
-    selection.sort()
-    fn = generate_pca_cache_fn(proj + '' if only_weight else '-included-buf', selection)
+def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, save_axis=True, process_newlist=True) -> dict:
+    # selection.sort() # 这个sort会打乱前端的显示
+    fn = generate_pca_cache_fn(proj + f'-{dim}d-' + ['', 'ow-'][only_weight] + ['', 'ax-'][save_axis] , sorted(selection))
     if os.path.exists(fn):
         print('cache found:', fn)
         with open(fn, 'rb') as f:
@@ -241,16 +245,16 @@ def ensure_pca_cache(proj: str, selection: list[str], only_weight=True) -> dict:
 
     avg, nplist = gather_selected_tensors(proj, selection, only_weight)
     # projection ===
-    pca = PCA(2)
+    pca = PCA(dim)
     newlist = pca.fit_transform(nplist).tolist()
-    axis: np.ndarray = pca.components_[:2]
-    for p, i in enumerate(newlist):
-        newlist[p] = {
-            'x': i[0],
-            'y': i[1],
-            'u': selection[p],
-            'l': cat(*selection[p].split('/')[:-1]),
-        }
+    if process_newlist:
+        for p, i in enumerate(newlist):
+            newlist[p] = {
+                'x': i[0],
+                'y': i[1],
+                'u': selection[p],
+                'l': cat(*selection[p].split('/')[:-1]),
+            }
 
     if len(cached_files := os.listdir(PCA_CACHE_DIR)) >= PCA_CACHE_CNT:
 
@@ -260,11 +264,13 @@ def ensure_pca_cache(proj: str, selection: list[str], only_weight=True) -> dict:
         while len(cached_files) >= PCA_CACHE_CNT:
             print('removed pca cache:', cached_files[-1])
             os.remove(PCA_CACHE_DIR + cached_files.pop()[1])
+    
     d = {
-        'axis': axis.tolist(),
-        'mean': avg.tolist(),
+        # 'mean': avg.tolist(),
         'coord': newlist,
     }
+    if save_axis:
+        d['axis'] = pca.components_[:dim].tolist()
     with open(fn, 'wb') as f:
         pickle.dump(d, f)
     return d
@@ -272,17 +278,20 @@ def ensure_pca_cache(proj: str, selection: list[str], only_weight=True) -> dict:
 
 @app.post('/pca')
 async def _(a: ArgsPCA):
-    return {'coord': ensure_pca_cache(a.proj, a.selection, a.weight)['coord']}
+    return {'coord': ensure_pca_cache(a.proj, a.selection, 2, a.weight)['coord']}
 
 from sklearn.manifold import TSNE
 
 @app.post('/tsne')
 async def _(a: ArgsPCA):
-    avg, nplist = gather_selected_tensors(a.proj, a.selection, a.weight)
-    logger.debug('nplist len: {}', len(nplist))
+    # avg, nplist = gather_selected_tensors(a.proj, a.selection, a.weight, False)
     # projection ===
+    pre_pca = ensure_pca_cache(a.proj, a.selection, 50, a.weight, False, False) # 先投影为50维
+    nplist = pre_pca['coord']
+    logger.debug('pre_pca len: {}', len(nplist))
+
     tsne = TSNE(2, perplexity=10, n_iter=3000, learning_rate='auto')
-    newlist = tsne.fit_transform(nplist).tolist()
+    newlist = tsne.fit_transform(np.array(nplist)).tolist()
     # axis: np.ndarray = tsne.components_[:2]
     for p, i in enumerate(newlist):
         newlist[p] = {
@@ -457,7 +466,7 @@ class ArgsHeatmap(BaseModel):
 
 @app.post('/heatmap')
 async def _(argu: ArgsHeatmap):
-    pca_data = ensure_pca_cache(argu.proj, argu.selection, True)
+    pca_data = ensure_pca_cache(argu.proj, argu.selection, 2, True)
 
     argu.xdir = pca_data['axis'][0]
     argu.ydir = pca_data['axis'][1]
