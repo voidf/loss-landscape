@@ -1,31 +1,23 @@
-import argparse
+import json
+import random
 from datetime import datetime
 from functools import partial
 from itertools import chain
-import json
 from math import prod
-import random
-import shutil
-import traceback
 from typing import List, Sequence
+
 import numpy as np
 import torch
-from sklearn.decomposition import PCA
-import matplotlib.pyplot as plt
-import pickle
-import copy
+import torch.nn as nn
 from loguru import logger
-from torch import optim
-from cifar10 import dataloader
+from torch import Tensor, optim
 
-from cifar10.model_loader import *
-from dataloader import load_dataset
+from cifar10 import dataloader
+from cifar10.model_loader import load
 from net_plotter import get_weights
-from wrappers import *
-import torch.multiprocessing as mp
-import evaluation
-import re
-    
+from wrappers import cat
+
+
 # https://github.com/VainF/Torch-Pruning/issues/49 by @Serjio42
 def round_pruning_amount(total_parameters, n_to_prune, round_to):
     """round the parameter amount after pruning to an integer multiple of `round_to`.
@@ -182,8 +174,9 @@ def scan(
     # net, optimizer, trainloader = acc.prepare(net, optimizer, trainloader)
 
 
-    from main import train, test
     from safetensors.torch import save_file
+
+    from main import test, train
 
 
     for e in range(from_epoch + 1, to_epoch + 1):
@@ -375,8 +368,8 @@ def calc():
             torch.save((tx, ty), projdir(f'model_{n}.proj'))
 
 def draw():
-    from sklearn.manifold import TSNE
     from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
     proj = ('R56_09', 'resnet56_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', )
     # proj = ('R56N_05', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', )
     # proj = ('R56N_05', 'resnet56_noshort_sgd_lr=0.1_bs=128_wd=0.0005_mom=0.9_save_epoch=1', 'model_100B3', )
@@ -442,6 +435,7 @@ def draw():
         # pos = model.fit_transform(np.array(li))
 
         import matplotlib.pyplot as plt
+
         from wrappers import lerp
 
         fig, ax = plt.subplots(subplot_kw={'projection':'3d'})

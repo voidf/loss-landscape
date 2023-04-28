@@ -4,7 +4,6 @@ import os
 
 
 cfg = {
-    'VGGS':  [64, 'M', 128, 'M', 256, 'M'],
     'VGG9':  [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M'],
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
@@ -35,35 +34,14 @@ class VGG(torch.jit.ScriptModule):
         self.fc = self._make_fc_layers()
         self.classifier = nn.Linear(self.n_maps, 10)
 
-    def clear_ckp(self, ckp, pf):
-        for i in list(mem_cache.keys()):
-        # for i in os.listdir('plot_cache'):
-            if i.startswith(f'plot_cache/{pf}-{ckp}-') and i.endswith('.ckp'):
-                mem_cache.pop(i)
-                # os.remove('plot_cache' + i)
-
-    def forward(self, x
-    #, batch_idx=None, ckp=2, ckp_prefix='train'
-    ):
-        # if batch_idx is None:
+    def forward(self, x):
         out = self.features(x)
         out = out.view(out.size(0), -1)
         out = self.fc(out)
         out = self.classifier(out)
         return out
 
-        # out = None
-        # if ckp <= 0 or not chk_ckp(batch_idx, 0, ckp_prefix):
-        #     out = self.features(x)
-        #     out = out.view(out.size(0), -1)
-        #     save_ckp(out, batch_idx, 0, ckp_prefix)
-        # if ckp <= 1 or not chk_ckp(batch_idx, 1, ckp_prefix):
-        #     if out is None: out = load_ckp(batch_idx, 0, ckp_prefix)
-        #     out = self.fc(out)
-        #     save_ckp(out, batch_idx, 1, ckp_prefix)
-        # if out is None: out = load_ckp(batch_idx, 1, ckp_prefix)
-        # out = self.classifier(out)
-        # return out
+
 
     def _make_fc_layers(self):
         layers = []
@@ -88,9 +66,6 @@ class VGG(torch.jit.ScriptModule):
 
 def VGG9():
     return VGG('VGG9')
-
-def VGGS():
-    return VGG('VGGS')
 
 def VGG16():
     return VGG('VGG16')

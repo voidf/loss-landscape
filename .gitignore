@@ -20,3 +20,4 @@ data/
 logs.txt
 lenet*/
 trained/
+.vscode

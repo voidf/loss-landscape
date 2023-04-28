@@ -1,0 +1,6 @@
+loguru
+fastapi
+pydantic
+scikit-learn
+safetensors
+numpy

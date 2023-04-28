@@ -7,19 +7,20 @@ import cifar10.models.cnn as cnn
 import cifar10.models.effnet as effnet
 # map between model name and function
 models = {
-    # 'vggs'                  : vgg.VGGS,
     'vgg9'                  : vgg.VGG9,
+    'vgg16'                  : vgg.VGG16,
+    'vgg19'                  : vgg.VGG19,
     'densenet121'           : densenet.DenseNet121,
-    'resnet18'              : resnet.ResNet18,
-    'resnet18_noshort'      : resnet.ResNet18_noshort,
-    'resnet34'              : resnet.ResNet34,
-    'resnet34_noshort'      : resnet.ResNet34_noshort,
-    'resnet50'              : resnet.ResNet50,
-    'resnet50_noshort'      : resnet.ResNet50_noshort,
-    'resnet101'             : resnet.ResNet101,
-    'resnet101_noshort'     : resnet.ResNet101_noshort,
-    'resnet152'             : resnet.ResNet152,
-    'resnet152_noshort'     : resnet.ResNet152_noshort,
+    'resnet18'              : resnet.ResNet18, #
+    'resnet18_noshort'      : resnet.ResNet18_noshort, #
+    'resnet34'              : resnet.ResNet34, #
+    'resnet34_noshort'      : resnet.ResNet34_noshort, #
+    'resnet50'              : resnet.ResNet50, #
+    'resnet50_noshort'      : resnet.ResNet50_noshort, #
+    'resnet101'             : resnet.ResNet101, #
+    'resnet101_noshort'     : resnet.ResNet101_noshort, #
+    'resnet152'             : resnet.ResNet152, #
+    'resnet152_noshort'     : resnet.ResNet152_noshort, #
     'resnet20'              : resnet.ResNet20,
     'resnet20_noshort'      : resnet.ResNet20_noshort,
     'resnet32_noshort'      : resnet.ResNet32_noshort,
