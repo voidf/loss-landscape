@@ -20,10 +20,3 @@ Then, launch the backend simply run:
 ```
 python api.py
 ```
-
-## Experiments
-
-**Data preprocessing**:
-The data pre-processing method used for visualization should be consistent with the one used for model training.
-No data augmentation (random cropping or horizontal flipping) is used in calculating the loss values.
-

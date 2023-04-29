@@ -44,7 +44,7 @@ torch.backends.cuda.matmul.allow_tf32 = True
 MODEL_DIR = 'trained/'
 WORKER_CNT = 8
 PCA_CACHE_DIR = '_pca_cache/'
-PCA_CACHE_CNT = 100
+PCA_CACHE_CNT = 200
 # pool = None
 
 
@@ -822,7 +822,7 @@ async def _(a: ArgsClamp):
             branch_dir = generate_mex_branch_dir(sp, from_epoch)
             branch_dirs.append(branch_dir)
             save_file(ckp, cat(sp, branch_dir,
-                      f'model_{from_epoch}.safetensors'))
+                      f'model_{from_epoch + 1}.safetensors'))
             write_weights(net, ckp['param'])
             if 'buf' in ckp:
                 write_buf_no_nbt(net, ckp['buf'])
@@ -838,13 +838,13 @@ async def _(a: ArgsClamp):
             r.append(q2.get())
         r.sort(key=lambda x: x[0])
         for i, train_loss, train_acc, test_loss, test_acc in r:
-            with open(cat(sp, branch_dirs[i], f'model_{from_epoch}.json'), 'w') as f:
+            with open(cat(sp, branch_dirs[i], f'model_{from_epoch + 1}.json'), 'w') as f:
                 r[i] = {
                     'tea': test_acc,
                     'tel': test_loss,
                     'tra': train_acc,
                     'trl': train_loss,
-                    'epoch': from_epoch,
+                    'epoch': from_epoch + 1,
                     'clamp': f'{a.u1}_{a.u2}_{i+1}/{a.ctr + 1}'
                 }
                 json.dump(r[i], f)

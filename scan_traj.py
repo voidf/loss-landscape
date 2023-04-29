@@ -1,7 +1,9 @@
 import json
 import random
+import os
+import operator
 from datetime import datetime
-from functools import partial
+from functools import partial, reduce
 from itertools import chain
 from math import prod
 from typing import List, Sequence
