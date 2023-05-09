@@ -20,3 +20,9 @@ Then, launch the backend simply run:
 ```
 python api.py
 ```
+
+## Reference
+
+[EfficientNetV2 implementation](https://github.com/d-li14/efficientnetv2.pytorch)
+
+[Other CNNs](https://github.com/fdraxler/PyTorch-AutoNEB)

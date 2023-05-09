@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel
 from safetensors import safe_open
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, IncrementalPCA
 from sklearn.manifold import TSNE
 from torch import Tensor
 
@@ -192,6 +192,7 @@ class ArgsPCA(BaseModel):
     selection: List[str]
     proj: str
     weight: bool = True
+    incr: int = 0
 
 
 def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
@@ -204,45 +205,55 @@ def translate_u_path(u: str, dir_only=False, suffix='safetensors') -> List[str]:
         path.append(m)
     return path
 
+def get_tensor_from_file(fp: str):
+    with safe_open(fp, framework='np') as fil:
+        param: np.ndarray = fil.get_tensor('param')
+        try:
+            buf: np.ndarray = fil.get_tensor('buf')
+        except:
+            buf = np.array([])
+    return param, buf
 
-def gather_selected_tensors(proj: str, selection: list[str], only_weight=True, calc_avg=True):
+def gather_selected_tensors(proj: str, selection: list[str], only_weight=True, batch=0):
     if len(selection) == 0:
         raise HTTPException(400, 'empty selection')
     proj = MODEL_DIR + proj
 
     nplist = []
-    avg = None
+    # avg = None
 
     # weight_len = sum(map(lambda x: reduce(operator.mul, x.data.shape), net.parameters()))
 
     for j in os.listdir(proj):
         for i in selection:
-            with safe_open(fp := cat(proj, j, *translate_u_path(i)), framework='np') as fil:
-                param: np.ndarray = fil.get_tensor('param')
-                try:
-                    buf: np.ndarray = fil.get_tensor('buf')
-                except:
-                    buf = np.array([])
+            fp = cat(proj, j, *translate_u_path(i))
+            param, buf = get_tensor_from_file(fp)
                 # nbt: np.ndarray = fil.get_tensor('nbt')
-            if calc_avg:
-                cated = np.concatenate((param, buf))
-                if avg is None:
-                    avg = cated.copy()
-                else:
-                    avg += cated
+            # if calc_avg:
+            #     if avg is None:
+            #         avg = cated.copy()
+            #     else:
+            #         avg += cated
             # ts, t7 = t7_to_tensor(s.arch, cat(proj, j, *translate_u_path(i)), True)
             # ts = ts.numpy() # 输出： param + buf
             if only_weight:
                 nplist.append(param)
             else:
+                cated = np.concatenate((param, buf))
                 nplist.append(cated)
+            if batch > 0 and len(nplist) == batch:
+                ret = np.array(nplist)
+                nplist.clear()
+                yield ret
             # nplist.append(ts[:weight_len])
 
-    nplist = np.array(nplist)
-    if not calc_avg:
-        return nplist
-    avg /= len(nplist)
-    return avg, nplist
+    # nplist = np.array(nplist)
+    if nplist:
+        yield np.array(nplist)
+    # if not calc_avg:
+        # return nplist
+    # avg /= len(nplist)
+    # return avg, nplist
 
 
 def generate_pca_cache_fn(proj: str, selection: list[str]):
@@ -251,27 +262,35 @@ def generate_pca_cache_fn(proj: str, selection: list[str]):
     return PCA_CACHE_DIR + b64 + '.pkl'
 
 
-def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, save_axis=True, process_newlist=True) -> dict:
+def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, save_axis=True, increment=0) -> dict:
     # selection.sort() # 这个sort会打乱前端的显示
     fn = generate_pca_cache_fn(
-        proj + f'-{dim}d-' + ['', 'ow-'][only_weight] + ['', 'ax-'][save_axis], sorted(selection))
+        proj + f'-{dim}d-' + ['', 'ow-'][only_weight] + ['', 'ax-'][save_axis] + ['', f'incr{increment}-'][increment>0], sorted(selection))
     if os.path.exists(fn):
         print('cache found:', fn)
         with open(fn, 'rb') as f:
             return pickle.load(f)
 
-    avg, nplist = gather_selected_tensors(proj, selection, only_weight)
-    # projection ===
-    pca = PCA(dim)
-    newlist = pca.fit_transform(nplist).tolist()
-    if process_newlist:
-        for p, i in enumerate(newlist):
-            newlist[p] = {
-                'x': i[0],
-                'y': i[1],
-                'u': selection[p],
-                'l': cat(*selection[p].split('/')[:-1]),
-            }
+    if increment > 0:
+        pca = IncrementalPCA(dim, batch_size=increment)
+        newlist = []
+        for batch in gather_selected_tensors(proj, selection, only_weight, increment):
+            pca.partial_fit(batch)
+        for batch in gather_selected_tensors(proj, selection, only_weight, increment):
+            newlist.extend(pca.transform(batch))
+
+    else:
+        nplist = next(gather_selected_tensors(proj, selection, only_weight, increment))
+        pca = PCA(dim)
+        newlist = pca.fit_transform(nplist).tolist()
+
+    for p, i in enumerate(newlist):
+        newlist[p] = {
+            'x': i[0],
+            'y': i[1],
+            'u': selection[p],
+            'l': cat(*selection[p].split('/')[:-1]),
+        }
 
     if len(cached_files := os.listdir(PCA_CACHE_DIR)) >= PCA_CACHE_CNT:
 
@@ -295,18 +314,18 @@ def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, s
 
 @app.post('/pca')
 async def _(a: ArgsPCA):
-    return {'coord': ensure_pca_cache(a.proj, a.selection, 2, a.weight)['coord']}
+    return {'coord': ensure_pca_cache(a.proj, a.selection, 2, a.weight, increment=a.incr)['coord']}
 
 
 @app.post('/tsne')
 async def _(a: ArgsPCA, pre_pca: int = 1):
     if pre_pca:
         pre_pca = ensure_pca_cache(
-            a.proj, a.selection, 50, a.weight, False, False)  # 先投影为50维
+            a.proj, a.selection, dim=min(len(a.selection), 50), only_weight=a.weight, save_axis=False, increment=a.incr)  # 先投影为50维
         nplist = pre_pca['coord']
         logger.debug('pre_pca len: {}', len(nplist))
     else:
-        nplist = gather_selected_tensors(a.proj, a.selection, a.weight, False)
+        nplist = gather_selected_tensors(a.proj, a.selection, a.weight, batch=0)
 
     tsne = TSNE(2, perplexity=10, n_iter=3000, learning_rate='auto')
     newlist = tsne.fit_transform(np.array(nplist)).tolist()
@@ -616,7 +635,7 @@ async def _(a: ArgsDisturb):
                 nbt = torch.tensor([])
 
         init_params(net)
-        random_param = cat_tensor(get_weights(net))  # 用kaiming_normal_
+        random_param = cat_tensor(get_weights(net)).to('cuda')  # 用kaiming_normal_
 
         param += a.mag * random_param  # [-a.mag, a.mag] kaiming_normal_分布
         write_weights(net, param)
