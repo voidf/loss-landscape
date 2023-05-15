@@ -261,6 +261,15 @@ def generate_pca_cache_fn(proj: str, selection: list[str]):
     b64 = f'{proj}-' + base64.b64encode(dig, altchars=b'+^').decode('utf-8')
     return PCA_CACHE_DIR + b64 + '.pkl'
 
+def newlist_tojson(newlist: list, selection: list[str]):
+    for p, i in enumerate(newlist):
+        newlist[p] = {
+            'x': i[0],
+            'y': i[1],
+            'u': selection[p],
+            'l': cat(*selection[p].split('/')[:-1]),
+        }
+    return newlist
 
 def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, save_axis=True, increment=0) -> dict:
     # selection.sort() # 这个sort会打乱前端的显示
@@ -270,27 +279,21 @@ def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, s
         print('cache found:', fn)
         with open(fn, 'rb') as f:
             return pickle.load(f)
-
+    print('increment', increment)
     if increment > 0:
         pca = IncrementalPCA(dim, batch_size=increment)
         newlist = []
         for batch in gather_selected_tensors(proj, selection, only_weight, increment):
             pca.partial_fit(batch)
         for batch in gather_selected_tensors(proj, selection, only_weight, increment):
-            newlist.extend(pca.transform(batch))
+            newlist.extend(pca.transform(batch).tolist())
 
     else:
         nplist = next(gather_selected_tensors(proj, selection, only_weight, increment))
         pca = PCA(dim)
         newlist = pca.fit_transform(nplist).tolist()
 
-    for p, i in enumerate(newlist):
-        newlist[p] = {
-            'x': i[0],
-            'y': i[1],
-            'u': selection[p],
-            'l': cat(*selection[p].split('/')[:-1]),
-        }
+    
 
     if len(cached_files := os.listdir(PCA_CACHE_DIR)) >= PCA_CACHE_CNT:
 
@@ -314,7 +317,9 @@ def ensure_pca_cache(proj: str, selection: list[str], dim=2, only_weight=True, s
 
 @app.post('/pca')
 async def _(a: ArgsPCA):
-    return {'coord': ensure_pca_cache(a.proj, a.selection, 2, a.weight, increment=a.incr)['coord']}
+    return {'coord': newlist_tojson(
+        ensure_pca_cache(a.proj, a.selection, 2, a.weight, increment=a.incr)['coord'], 
+    a.selection)}
 
 
 @app.post('/tsne')
@@ -325,8 +330,9 @@ async def _(a: ArgsPCA, pre_pca: int = 1):
         nplist = pre_pca['coord']
         logger.debug('pre_pca len: {}', len(nplist))
     else:
-        nplist = gather_selected_tensors(a.proj, a.selection, a.weight, batch=0)
+        nplist = next(gather_selected_tensors(a.proj, a.selection, a.weight, batch=0))
 
+    print('nplist:', nplist)
     tsne = TSNE(2, perplexity=10, n_iter=3000, learning_rate='auto')
     newlist = tsne.fit_transform(np.array(nplist)).tolist()
     # axis: np.ndarray = tsne.components_[:2]
